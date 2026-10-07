@@ -40,6 +40,14 @@ Unknown users and password mismatches return the same 401 `INVALID_CREDENTIALS` 
 
 After request validation and before password verification, apply shared 5-attempt/15-minute IP and normalized-email counters. Exceeded limits return 429 `RATE_LIMIT_EXCEEDED` with integer `Retry-After` seconds. Rejected request shapes do not consume these credential-attempt counters. JSON negotiation and the 100 KB parser limit follow the general rules above.
 
+## Protected province list
+
+`GET /provinces` requires a user bearer JWT. Missing/malformed/invalid/expired tokens, non-user actors, removed users, or invalid stored role/scope assignments return 401 `UNAUTHORIZED` with `WWW-Authenticate: Bearer`. Use one generic message, `A valid user bearer token is required.`; do not disclose token-validation details. Persistence failures remain sanitized 500s.
+
+Apply the current stored jurisdiction and optional geographic filters before count/paging. Return the standard list envelope with public `{ "id": "<UUID>", "name": "..." }` items ordered by name then public ID. Accept only single-valued `provinceId`, `districtId`, `substationId`, `offset`, and `limit`; malformed UUIDs, unknown/repeated fields, invalid paging, or conflicting ancestry among visible targets return 400 `INVALID_QUERY`. Unknown/out-of-scope filter targets return 200 with an empty scoped list.
+
+Successful responses use `Cache-Control: private, no-cache` and a stable strong ETag tied to the current principal and exact scoped representation. Omit Last-Modified because no reliable geography modification time is stored. Authenticate/reload User, apply the shared 120/minute user read limit, and scope the representation before conditional GET evaluation. Matching If-None-Match returns bodyless 304 with validators. Authentication, query, and rate-limit errors are not cacheable; 429 includes Retry-After seconds.
+
 ## Resource and query rules
 
 - Use `/api/v1.0` as the common base path, lowercase hyphenated segments, plural collection nouns, and IDs after collection names. Nest collections under their parent. The district summary is a top-level, verb-named processing function.

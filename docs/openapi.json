@@ -3,7 +3,7 @@
   "info": {
     "title": "Solar Generation API",
     "version": "1.0.0",
-    "description": "Implemented endpoints only: application liveness, OpenAPI, and user/admin JWT credential exchange."
+    "description": "Implemented endpoints: application liveness, OpenAPI, user/admin JWT exchange, and jurisdiction-scoped province lists."
   },
   "servers": [
     {
@@ -382,6 +382,200 @@
           }
         }
       }
+    },
+    "/provinces": {
+      "get": {
+        "operationId": "listProvinces",
+        "summary": "List provinces visible to the current user",
+        "security": [
+          {
+            "UserBearer": []
+          }
+        ],
+        "description": "National users and admins see all provinces; provincial users see their assigned province; district users see the province containing their assigned district. Apply geographic filters within the stored jurisdiction before counts and paging. Out-of-scope or unknown filter targets produce an empty list. Conflicting ancestry among visible filter targets is 400. Sort by name then public UUID. Repeated/unknown query fields are 400. Verify JWT and current User before rate limits, queries, or conditional requests; ignore stale role/jurisdiction/permissions claims. Shared reads are limited to 120 per minute per current User.",
+        "parameters": [
+          {
+            "name": "provinceId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "districtId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "substationId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Scoped province list",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "private, no-cache"
+                  ]
+                }
+              },
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator of the exact scoped representation and current stored principal."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProvinceList"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Current scoped representation unchanged; no body",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "private, no-cache"
+                  ]
+                }
+              },
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator of the exact scoped representation and current stored principal."
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query parameters or conflicting geographic ancestry.",
+            "headers": {},
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "INVALID_QUERY",
+                  "message": "Invalid query parameters or conflicting geographic ancestry.",
+                  "details": []
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "A valid user bearer token is required.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "Bearer"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "UNAUTHORIZED",
+                  "message": "A valid user bearer token is required.",
+                  "details": []
+                }
+              }
+            }
+          },
+          "406": {
+            "description": "Accept excludes JSON; no body"
+          },
+          "429": {
+            "description": "Too many read requests. Try again later.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "RATE_LIMIT_EXCEEDED",
+                  "message": "Too many read requests. Try again later.",
+                  "details": []
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected error occurred.",
+            "headers": {},
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "INTERNAL_SERVER_ERROR",
+                  "message": "An unexpected error occurred.",
+                  "details": []
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -406,6 +600,62 @@
             "items": {}
           }
         }
+      },
+      "Province": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "ProvinceList": {
+        "type": "object",
+        "required": [
+          "count",
+          "next",
+          "previous",
+          "items"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Total after jurisdiction and geographic filters, before pagination."
+          },
+          "next": {
+            "type": "string",
+            "nullable": true
+          },
+          "previous": {
+            "type": "string",
+            "nullable": true
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Province"
+            }
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "UserBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "HS256 user JWT from /auth/user-tokens. Each protected request reloads the current User role and jurisdiction."
       }
     }
   }

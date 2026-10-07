@@ -6,7 +6,7 @@ A Node.js/Express API backed by Mongoose and MongoDB Atlas for solar generation 
 
 ## Current implementation
 
-The application currently provides public `/health` and `/openapi.json`, user/admin login at `POST /auth/user-tokens`, six data models, the full dataset seed, and controlled user seeding. Login uses shared MongoDB attempt limits. Device authentication, resource endpoints, Swagger UI, database readiness, and other shared rate limits remain planned. The architecture describes the target API; OpenAPI describes implemented routes only.
+The application currently provides public `/health` and `/openapi.json`, user/admin login at `POST /auth/user-tokens`, protected `GET /provinces`, six data models, the full dataset seed, and controlled user seeding. Login and protected reads use shared MongoDB limits. Device authentication, remaining resource endpoints, Swagger UI, database readiness, and other traffic limits remain planned. The architecture describes the target API; OpenAPI describes implemented routes only.
 
 ## Getting started
 
@@ -51,6 +51,7 @@ With the default configuration:
 | `http://localhost:3000/api/v1.0/health` | Application liveness; returns `{"status":"ok"}` |
 | `http://localhost:3000/api/v1.0/openapi.json` | Implemented OpenAPI specification |
 | `http://localhost:3000/api/v1.0/auth/user-tokens` | POST email/password to obtain a user/admin access token |
+| `http://localhost:3000/api/v1.0/provinces` | GET visible provinces using `Authorization: Bearer <access_token>` |
 
 Health does not query MongoDB. For a manual startup check, confirm the connection message and request the health URL. See the [HTTP contract](docs/API_DESIGN_RULES.md) for response and conditional-request behavior.
 
@@ -91,7 +92,13 @@ The command verifies all configured accounts before committing its transaction a
 
 POST JSON containing only `email` and `password` to `/api/v1.0/auth/user-tokens`. A successful login returns `access_token`, `token_type=Bearer`, and `expires_in` in seconds. User ID, role, read scope, and regional assignment come from MongoDB. Unknown emails and incorrect passwords share the same 401 error.
 
-Login responses use `Cache-Control: no-store`. Shared counters allow 5 attempts per 15 minutes per IP and normalized email; excess attempts return 429 with `Retry-After`. This endpoint issues access tokens only; device login and protected resource routes remain planned. See the [HTTP contract](docs/API_DESIGN_RULES.md#user-token-exchange) and [OpenAPI](docs/openapi.json) for request/error details.
+Login responses use `Cache-Control: no-store`. Shared counters allow 5 attempts per 15 minutes per IP and normalized email; excess attempts return 429 with `Retry-After`. This endpoint issues access tokens only; device login and remaining resource routes remain planned. See the [HTTP contract](docs/API_DESIGN_RULES.md#user-token-exchange) and [OpenAPI](docs/openapi.json) for request/error details.
+
+## Protected province list
+
+Send the access token in `Authorization: Bearer <access_token>` to `GET /api/v1.0/provinces`. National analysts/admins see all provinces; provincial analysts see their assigned province; district analysts see their district's parent province. Each request verifies the JWT and reloads current User access from MongoDB, so deleted users and stale privileges cannot bypass authorization.
+
+The list returns `count`, `next`, `previous`, and public `items`. It accepts `provinceId`, `districtId`, `substationId`, `offset` (default 0), and `limit` (default 50, maximum 200); out-of-scope filters return an empty list. Responses use private scoped ETags; matching `If-None-Match` returns bodyless 304 only after authentication. Missing/invalid/expired/non-user tokens return 401. Shared read limits are 120/minute per User, including admins.
 
 ## Project layout
 
