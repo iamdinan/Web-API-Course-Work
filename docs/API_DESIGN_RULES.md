@@ -46,7 +46,7 @@ After request validation and before password verification, apply shared 5-attemp
 
 Unknown meters and secret mismatches return identical 401 `INVALID_CREDENTIALS` errors with message `Invalid meter ID or device secret.` and `WWW-Authenticate: Bearer`. Verify the submitted secret before evaluating status: valid credentials for an inactive installation return 403 `INSTALLATION_INACTIVE` with message `Inactive installations cannot obtain device tokens.` Neither error returns a token. Unexpected persistence/signing failures use the standard sanitized 500.
 
-After validation and before credential lookup, apply shared MongoDB counters of 5 attempts per 15 minutes per IP and exact meter ID, using separate namespaces from user login. Excess attempts use the existing 429 login error and integer `Retry-After`. Invalid request shapes do not consume credential-attempt counters. The installation JWT claims and current implementation scope are defined in the [architecture](architecture.md#device-token-implementation).
+After validation and before credential lookup, apply shared MongoDB counters of 5 attempts per 15 minutes per IP and exact meter ID, using separate namespaces from user login. Excess attempts use the existing 429 login error and integer `Retry-After`. Invalid request shapes do not consume credential-attempt counters. Installation JWT claims are defined in the [architecture](architecture.md#device-token-implementation).
 
 ## Installation JWT verification and ownership
 
@@ -54,7 +54,17 @@ Installation-only middleware reads `Authorization: Bearer <token>` and verifies 
 
 A valid installation actor without exactly `scope=installation-write` returns 403 `FORBIDDEN` with message `The token does not permit installation writes.` Current inactive installations return 403 `INSTALLATION_INACTIVE` with message `Inactive installations cannot authenticate for writes.` URL ownership mismatches return 403 `FORBIDDEN` with message `The authenticated installation cannot access this installation.` Ownership checks without authenticated installation context return the installation 401 above. All errors use the standard JSON shape; persistence failures remain sanitized 500s.
 
-These are reusable middleware contracts; no new public route is introduced. Token issuance keeps its existing credential/status responses. Reading submission and ingestion rate limits remain planned.
+These middleware protect reading submission below. Token issuance keeps its existing credential/status responses.
+
+## Device reading submission
+
+`POST /installations/{installationId}/readings` uses installation JWT verification and exact URL ownership. User/admin tokens return 401; insufficient scope, inactive status, and ownership mismatch return 403. Deleted installations return 401, including when deletion wins a concurrent insertion transaction.
+
+Accept an `application/json` object containing exactly `recordedAt`, `powerKw`, `energyKwh`, and `voltageV`. Measurements must be finite nonnegative JSON numbers; strings are not coerced. Reject missing/unknown fields, including client IDs, installation binding, and receipt time, with 400 `INVALID_REQUEST`. `recordedAt` must be a valid calendar ISO 8601 timestamp (`YYYY-MM-DDTHH:mm:ss[.SSS]Z` or an explicit `+/-HH:mm` offset), with one to three fractional digits when present. Reject timezone-free values, calendar overflow, leap seconds, and precision beyond BSON milliseconds. Clock-drift, age, and measurement upper bounds remain unresolved; none are enforced.
+
+After authentication, ownership, and body validation, consume shared counters of 30 submissions/minute per installation public UUID and IP, in separate device-write namespaces. Valid-shaped attempts, including duplicates, consume counters. Exceeded limits return 429 `RATE_LIMIT_EXCEEDED` and integer `Retry-After` seconds. Parser, negotiation, and media-type errors follow the general contract.
+
+Identity, ownership, receipt time, and atomic insertion follow the [architecture transaction strategy](architecture.md#reading-ingestion). Duplicate `(installationId, recordedAt)` returns 409 `DUPLICATE_READING` without overwriting. Return 201 with only `id`, `installationId`, both timestamps formatted with `+05:30`, and the three measurements. Include a strong ETag for the exact public representation, `Last-Modified` from `receivedAt` as an HTTP date, and `Location: /api/v1.0/installations/{installationId}/readings/{readingId}` (respect the configured prefix). All submission responses use `Cache-Control: no-store`. The Location identifies the user-authorized reading GET; see [current implementation](../README.md#current-implementation) for route availability.
 
 ## Protected province list
 

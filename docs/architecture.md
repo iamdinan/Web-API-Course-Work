@@ -56,9 +56,9 @@ The seed is setup tooling and may restore missing fixture history for an inactiv
 
 New development installations derive their password from `DEVICE_HASH_COMMON_PREFIX` plus the exact meter ID. Store only its salted scrypt hash in `deviceCredentialHash`; no random disposable-secret fallback or per-installation override is used. Prefix configuration is required before dataset seed writes. This is a development convenience, not the production provisioning scheme: real devices require independent credentials. Normal reruns preserve existing hashes and statuses; credential replacement is an explicit setup operation, never an automatic rerun or an admin API permission.
 
-`scripts/seed-data.js` generates the geography and profiles; `scripts/seed.js` handles persistence. `test/seed.test.js` checks generation and rerun preservation offline. See the [README](../README.md#sample-data) for commands, credential configuration, and historical verification evidence.
+`scripts/seed-data.js` generates the geography and profiles; `scripts/seed.js` handles persistence. See the [README](../README.md#sample-data) for commands and credential configuration.
 
-The former two-installation demo is preserved separately in `seed_fixture_archive`, including copies of the shared Western/Colombo parents reused in the live hierarchy. The current seed leaves the archive untouched. Completed migration tools and the one-off verifier were removed; their history remains in the [prompt log](prompt-log.md).
+The former two-installation demo is preserved separately in `seed_fixture_archive`, including copies of the shared Western/Colombo parents reused in the live hierarchy. The current seed leaves the archive untouched. Migration history belongs to the [prompt log](prompt-log.md).
 
 ### User seeding
 
@@ -154,7 +154,7 @@ Login and user-read counters live in the operational `token_rate_limits` collect
 
 Active installations receive only `sub` (installation public UUID), `actor=installation`, and `scope=installation-write`, plus standard `iss`, `aud`, `iat`, and `exp`. User and device issuance share the signing utility and existing HS256 environment configuration. Device issuance uses the same operational counter collection and atomic expiry rules, with separate hashed device-IP and meter-ID keys. HTTP errors and limits belong to the [device exchange contract](API_DESIGN_RULES.md#device-token-exchange).
 
-The existing user JWT middleware rejects installation actors before User lookup; these tokens cannot read `/provinces`. Installation verification and ownership middleware are implemented below. Reading submission remains unimplemented; future ingestion must also enforce installation state and deletion coordination atomically at persistence time.
+The existing user JWT middleware rejects installation actors before User lookup; these tokens cannot read `/provinces`. Installation verification and ownership middleware protect reading submission below.
 
 ### Verified installations and ownership
 
@@ -162,7 +162,13 @@ The existing user JWT middleware rejects installation actors before User lookup;
 
 Attach only a frozen `{ id: installation.publicId }` as `req.installation`. `requireInstallationOwnership` must follow verification and requires `req.params.installationId` to match this authenticated public UUID exactly; user/admin context cannot substitute for installation authentication. Both actor types reuse cryptographic checks while retaining separate current-principal lookup and authorization behavior. See the [HTTP contract](API_DESIGN_RULES.md#installation-jwt-verification-and-ownership) for 401/403 conventions.
 
-These middleware modules are ready for future installation-bound routes and are not mounted on a public test endpoint. Reading submission and its persistence-time active-status/deletion safeguards remain planned; verification alone does not solve concurrent deactivation or deletion during a write.
+Installation verification and ownership precede the persistence-time safeguards below.
+
+### Reading ingestion
+
+The reading service initializes declared indexes, then uses `mongoose.connection.transaction` with snapshot reads and majority writes. Inside each retry, a conditional Mongoose installation update matches the authenticated public UUID and `status=active`, setting a fresh temporary `_ingestionLock` UUID to guarantee a real parent write. If no active parent matches, reload within the session and reject inactive, absent, or invalid installation state using the HTTP contract. Save a new validated GenerationReading with server-generated public UUID, authenticated installation reference, and server receipt time in that same session. Unset the temporary lock before commit. It is internal, excluded from public JSON/projections, and never changes public installation validators. Failed saves/duplicate timestamps roll back all transaction writes.
+
+Lifecycle transactions must write the same installation document before evaluating the deletion readings guard; deactivation also writes that document. MongoDB conflicts and transaction retries therefore re-evaluate existence/status. Lifecycle committing first prevents a reading commit; ingestion committing first causes guarded deletion to find history and refuse deletion. Snapshot-only checks or separate check/insert/delete operations are insufficient. The seed's existing temporary parent write coordinates through the same document. See the [HTTP contract](API_DESIGN_RULES.md#device-reading-submission) for validation, duplicate and response behavior.
 
 ### Verified users and province access
 

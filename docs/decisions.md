@@ -39,7 +39,6 @@ This file records choices, their reasons, and unresolved questions. Concrete sch
 - **Integrity:** Coordinate ingestion and deletion through a shared transactional installation write or an equivalent guarantee. Snapshot checks alone cannot prevent orphaned readings. Replacements receive new public IDs so old installation tokens cannot address them.
 - **Conditional writes:** Optional strong `If-Match` protects against stale admin changes while retaining unconditional clients. Compare against the same public detail representation used by GET and PATCH; internal lock fields must not change its ETag. Request ordering and status rules belong to the [HTTP contract](API_DESIGN_RULES.md#caching-and-access); persistence guarantees belong to the [architecture](architecture.md#admin-installation-management).
 - **Provisioning:** Use controlled account setup and current stored roles, with no public registration or committed passwords.
-- **Status:** Inactive-installation token issuance and verification rejection are implemented; lifecycle writes and ingestion remain planned. Its implementation must include the agent verification requirements in [AGENTS.md](../AGENTS.md).
 
 ## D08 — Environment configuration and health
 
@@ -75,33 +74,34 @@ This file records choices, their reasons, and unresolved questions. Concrete sch
 
 - **Choice:** Verify user JWTs and reload stored identity/access on every protected request; attach a credential-free current principal. Start with the existing architecture's province collection and reuse shared counters for 120 reads/minute per User.
 - **Reason:** A valid signature does not establish that the User still exists or retains the token's role/jurisdiction. Scoped database filters and counts prevent leakage; principal-specific private validators prevent stale or foreign cache validators bypassing current access.
-- **Surface:** Implement only GET /provinces for this step. Province and district analysts see their authorized parent province; geographic filters can narrow access but cannot expand it. See architecture and HTTP rules for details.
 
 ## D14 - Development device credential derivation
 
-- **Choice:** For development only, derive each installation password from the private `.env` common prefix followed by its exact meter ID. Use the same salted scrypt format and verification helper as user passwords. Replace the earlier unknown installation hashes through an explicitly authorized one-time setup update.
+- **Choice:** For development only, derive each installation password from the private `.env` common prefix followed by its exact meter ID. Use the same salted scrypt format and verification helper as user passwords. Credential replacement requires an explicit setup operation.
 - **Reason:** This avoids managing 220 separate development secrets while retaining normal password verification against stored hashes. Prefix compromise exposes all derived device passwords, so production devices must have independent credentials.
-- **Reruns:** New installations use this derivation by default. Existing hashes, statuses, IDs, ancestry, and readings remain unchanged on normal seed reruns; prefix changes require explicit credential replacement. This seed decision introduced no credential-rotation API; device token issuance is covered by D15. Completed live-update evidence belongs in the prompt log.
+- **Reruns:** New installations use this derivation by default. Existing hashes, statuses, IDs, ancestry, and readings remain unchanged on normal seed reruns; prefix changes require explicit credential replacement. Device token issuance is covered by D15; credential replacement remains outside the HTTP API.
 
 ## D15 - Device credential exchange
 
 - **Choice:** Verify submitted meter credentials against the stored scrypt hash, then allow token issuance only for active installations. Reuse user-token HS256 configuration and response shape, with installation-only claims and separate shared IP/meter login counters.
 - **Reason:** Stored-hash verification supports both development-derived and independent production secrets. Credential verification before status prevents disclosing inactive installations to clients without valid secrets. Actor separation keeps installation tokens out of user reads.
-- **Scope:** This chunk covered token issuance only; installation verification is covered by D16. Ingestion and credential rotation remain planned. See the architecture and HTTP contract for behavior.
 
 ## D16 - Current-installation verification and ownership
 
 - **Choice:** Reuse cryptographic bearer checks, require the installation actor and exact write scope, reload installation state by its public UUID, and attach only the authenticated public ID. Apply a separate URL ownership check after authentication.
 - **Reason:** Unexpired tokens must lose access when the installation is deleted or inactive; token claims cannot override current stored state or permit another installation's writes. Keep user and installation principal lookups separate.
-- **Errors:** Wrong actors return 401 in both middleware types, following the user's clarification. Valid installation actors with insufficient scope, inactive status, or mismatched URL ownership return 403. Missing principals remain 401; database failures remain sanitized 500s.
-- **Scope:** Middleware only, without a public test route or reading submission. Future ingestion still requires atomic persistence-time status and deletion safeguards.
+
+## D17 - Transactional device reading submission
+
+- **Choice:** Coordinate installation-bound reading insertion and lifecycle changes through a real parent-document write in the same transaction. Use the shared device limits from the [architecture](architecture.md#rate-limits).
+- **Reason:** Authentication alone cannot stop concurrent deactivation/deletion. A shared parent document write serializes ingestion with lifecycle transactions and protects history from orphaning; timestamp uniqueness prevents overwrites.
+- **Validation reason:** Explicit-zone timestamps avoid server-timezone ambiguity; millisecond precision preserves timestamp identity in BSON dates. Measurement ceilings and clock-drift/age bounds require domain decisions before enforcement. Input rules belong to the [HTTP contract](API_DESIGN_RULES.md#device-reading-submission).
 
 ## Pending decisions
 
 | Topic | Decision needed |
 | --- | --- |
-| Response-header instruction | Clarify whether “curl response headers” means curl evidence, CORS headers, or both. |
 | Measurement validation | Set meter clock-drift and measurement bounds. |
 | Energy counter resets | Finalize reset/baseline behavior for district energy calculations. |
 | Deployment | Choose the deployment provider and HTTPS configuration. |
-| Rate thresholds | Confirm or revise thresholds for remaining traffic classes; user/device token issuance uses 5 attempts/15 minutes and protected user reads use 120/minute. |
+| Rate thresholds | Confirm or revise thresholds for remaining traffic classes; user/device token issuance uses 5 attempts/15 minutes and protected user reads use 120/minute, and device ingestion uses the initial 30/minute per installation and IP. |
