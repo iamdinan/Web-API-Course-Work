@@ -182,4 +182,4 @@ async function main() {
 }
 
 if (require.main === module) main();
-module.exports = { accountDefinitions, loadAccounts, resolveAccounts, seedUsers };
+module.exports = { accountDefinitions, loadAccounts, seedUsers };

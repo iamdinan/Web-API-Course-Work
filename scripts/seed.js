@@ -145,4 +145,4 @@ async function main() {
 }
 
 if (require.main === module) main();
-module.exports = { seedFullDataset, seedHierarchy, insertReadingBatch };
+module.exports = { seedHierarchy, insertReadingBatch };

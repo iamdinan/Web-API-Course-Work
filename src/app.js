@@ -10,6 +10,9 @@ app.use(apiBaseUrl, (req, res, next) => {
   if (req.method === 'POST' && /^\/auth\/(user|device)-tokens\/?$/i.test(req.path)) {
     res.set({ 'Cache-Control': 'no-store', Pragma: 'no-cache' });
   }
+  if (req.method === 'POST' && /^\/installations\/[^/]+\/readings\/?$/i.test(req.path)) {
+    res.set('Cache-Control', 'no-store');
+  }
   if (!req.accepts('json')) return res.status(406).end();
   next();
 }, express.json(), apiRouter);

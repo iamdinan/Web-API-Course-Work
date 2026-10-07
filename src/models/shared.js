@@ -37,6 +37,7 @@ function createSchema(fields) {
         delete result.__v;
         delete result.deviceCredentialHash;
         delete result.passwordHash;
+        delete result._ingestionLock;
         for (const field of ["recordedAt", "receivedAt"]) {
           if (result[field] instanceof Date) {
             // Preserve the instant while displaying Asia/Colombo (UTC+05:30).

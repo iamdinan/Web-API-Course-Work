@@ -3,7 +3,7 @@
   "info": {
     "title": "Solar Generation API",
     "version": "1.0.0",
-    "description": "Implemented endpoints: application liveness, OpenAPI, user/admin and device JWT exchange, and jurisdiction-scoped province lists."
+    "description": "Implemented endpoints: application liveness, OpenAPI, user/admin and device JWT exchange, and jurisdiction-scoped province lists. Active installations can submit append-only readings."
   },
   "servers": [
     {
@@ -488,21 +488,6 @@
               }
             }
           },
-          "406": {
-            "$ref": "#/components/responses/TokenNotAcceptable"
-          },
-          "413": {
-            "$ref": "#/components/responses/TokenPayloadTooLarge"
-          },
-          "415": {
-            "$ref": "#/components/responses/TokenUnsupportedMediaType"
-          },
-          "429": {
-            "$ref": "#/components/responses/TokenRateLimited"
-          },
-          "500": {
-            "$ref": "#/components/responses/TokenServerError"
-          },
           "403": {
             "description": "Credentials verified, but the installation is inactive.",
             "headers": {
@@ -519,6 +504,189 @@
                   "code": "INSTALLATION_INACTIVE",
                   "message": "Inactive installations cannot obtain device tokens.",
                   "details": []
+                }
+              }
+            }
+          },
+          "406": {
+            "$ref": "#/components/responses/TokenNotAcceptable"
+          },
+          "413": {
+            "$ref": "#/components/responses/TokenPayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/TokenUnsupportedMediaType"
+          },
+          "429": {
+            "$ref": "#/components/responses/TokenRateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/TokenServerError"
+          }
+        }
+      }
+    },
+    "/installations/{installationId}/readings": {
+      "post": {
+        "operationId": "createInstallationReading",
+        "summary": "Submit an append-only reading for the authenticated active installation",
+        "description": "Accept exactly four input fields. UUID, installation binding and receivedAt are server controlled. Authentication/ownership and body validation precede shared limits of 30/minute per installation and per IP. All responses are no-store. Active status is rechecked with a parent write inside the insertion transaction; lifecycle conflicts retry with current status/existence. Duplicate timestamps never overwrite history.",
+        "security": [
+          {
+            "InstallationBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "installationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Must exactly match the authenticated installation public UUID; mismatch returns 403."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReadingInput"
+              },
+              "example": {
+                "recordedAt": "2026-10-08T12:00:00+05:30",
+                "powerKw": 3.5,
+                "energyKwh": 42,
+                "voltageV": 230
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Reading created. The Location targets a planned user-authorized reading GET; that GET is not implemented yet.",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "/api/v1.0/installations/{installationId}/readings/{readingId} (configured base path)."
+              },
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator of the exact public reading JSON."
+              },
+              "Last-Modified": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "HTTP date from receivedAt."
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerationReading"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid fields/timestamp/measurements (INVALID_REQUEST), or malformed JSON (INVALID_JSON).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired, user/wrong-actor token or deleted installation (UNAUTHORIZED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "$ref": "#/components/headers/BearerChallenge"
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient scope or installation ID mismatch (FORBIDDEN), or inactive installation (INSTALLATION_INACTIVE).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "406": {
+            "$ref": "#/components/responses/NotAcceptable"
+          },
+          "409": {
+            "description": "Existing installation/recordedAt pair (DUPLICATE_READING); existing reading remains unchanged.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "JSON body exceeds 100 KB (PAYLOAD_TOO_LARGE).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Body must use application/json (UNSUPPORTED_MEDIA_TYPE).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Shared device-write installation or IP limit exceeded (RATE_LIMIT_EXCEEDED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/LoginRetryAfter"
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure (INTERNAL_SERVER_ERROR).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -623,6 +791,87 @@
             "description": "Configured token lifetime in seconds; default 900."
           }
         }
+      },
+      "ReadingInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "recordedAt",
+          "powerKw",
+          "energyKwh",
+          "voltageV"
+        ],
+        "properties": {
+          "recordedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?(?:Z|[+-]\\d{2}:\\d{2})$",
+            "description": "Valid calendar timestamp with explicit timezone and at most millisecond precision. No clock-drift or age bounds currently defined."
+          },
+          "powerKw": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Finite nonnegative JSON number; no upper bound currently defined."
+          },
+          "energyKwh": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Finite nonnegative JSON number; no upper bound currently defined."
+          },
+          "voltageV": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Finite nonnegative JSON number; no upper bound currently defined."
+          }
+        }
+      },
+      "GenerationReading": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "installationId",
+          "recordedAt",
+          "receivedAt",
+          "powerKw",
+          "energyKwh",
+          "voltageV"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "installationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "recordedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Asia/Colombo +05:30 timestamp."
+          },
+          "receivedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Server receipt time in Asia/Colombo +05:30."
+          },
+          "powerKw": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Finite nonnegative JSON number; no upper bound currently defined."
+          },
+          "energyKwh": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Finite nonnegative JSON number; no upper bound currently defined."
+          },
+          "voltageV": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Finite nonnegative JSON number; no upper bound currently defined."
+          }
+        }
       }
     },
     "securitySchemes": {
@@ -631,6 +880,12 @@
         "scheme": "bearer",
         "bearerFormat": "JWT",
         "description": "HS256 user JWT from /auth/user-tokens. Each protected request reloads the current User role and jurisdiction."
+      },
+      "InstallationBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Installation JWT from /auth/device-tokens; requires installation-write scope and current active installation ownership."
       }
     },
     "headers": {

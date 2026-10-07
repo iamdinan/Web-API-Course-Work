@@ -8,6 +8,7 @@ router.use('/health', healthRouter);
 router.use('/auth/user-tokens', require('./user-tokens.routes'));
 router.use('/auth/device-tokens', require('./device-tokens.routes'));
 router.use('/provinces', require('./provinces.routes'));
+router.use('/installations', require('./readings.routes'));
 router.get('/openapi.json', (req, res) => {
   res.set('Cache-Control', 'no-cache').json({
     ...specification,
