@@ -1,12 +1,11 @@
 const mongoose = require("mongoose");
-const { randomBytes, scrypt } = require("node:crypto");
-const { promisify, isDeepStrictEqual, parseEnv } = require("node:util");
+const { isDeepStrictEqual, parseEnv } = require("node:util");
 const { readFileSync } = require("node:fs");
 const path = require("node:path");
 const { connectDatabase, disconnectDatabase } = require("../src/config/database");
 const models = require("../src/models");
 const { createSites } = require("./seed-data");
-const scryptAsync = promisify(scrypt);
+const { hashPassword } = require("../src/services/passwords");
 
 class SeedUsersError extends Error {}
 
@@ -87,12 +86,6 @@ async function resolveAccounts(accounts, session) {
   });
 }
 
-async function passwordHash(password) {
-  const salt = randomBytes(16).toString("hex");
-  const hash = await scryptAsync(password, salt, 64);
-  return `scrypt$${salt}$${hash.toString("hex")}`;
-}
-
 async function readUsers(emails, session) {
   return models.User.find({ email: { $in: emails } }).select("+passwordHash").session(session).lean();
 }
@@ -110,7 +103,7 @@ async function seedUsers({ env = process.env } = {}) {
     const insertedDocuments = new Map();
     for (const { account, fields } of resolved) {
       if (before.has(account.email)) continue;
-      const document = new models.User({ ...fields, passwordHash: await passwordHash(account.password) });
+      const document = new models.User({ ...fields, passwordHash: await hashPassword(account.password) });
       document.$session(session);
       try {
         // Full document validation enforces cross-field scope and parent checks.
