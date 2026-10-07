@@ -62,9 +62,16 @@ async function checkDeviceTokenLimit(ip, meterId) {
   return consume("device-token-meter", meterId);
 }
 
+async function checkDeviceWriteLimit(ip, installationId) {
+  const retryAfter = await consume("device-write-ip", ip, 30, 60 * 1000);
+  if (retryAfter) return retryAfter;
+  return consume("device-write-installation", installationId, 30, 60 * 1000);
+}
+
 module.exports = {
   checkUserTokenLimit,
   checkDeviceTokenLimit,
   checkUserReadLimit,
+  checkDeviceWriteLimit,
   Counter,
 };

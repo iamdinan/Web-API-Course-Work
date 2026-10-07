@@ -14,7 +14,7 @@ const { apiBaseUrl } = require("../src/config/env");
 const config = require("../src/config/jwt");
 const { User } = require("../src/models");
 const limits = require("../src/services/token-rate-limit.service");
-const { verifyPassword } = require("../src/services/user-tokens.service");
+const { verifyPassword } = require("../src/services/passwords");
 const password = "test password with spaces ";
 let origin, server, hash;
 

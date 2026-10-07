@@ -14,4 +14,4 @@ async function issueUserToken(email, password) {
   return signAccessToken(id, claims);
 }
 
-module.exports = { issueUserToken, verifyPassword };
+module.exports = { issueUserToken };

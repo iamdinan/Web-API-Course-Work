@@ -178,5 +178,5 @@ test("OpenAPI documents the implemented device exchange and errors", async () =>
   assert.equal(schema.additionalProperties, false);
   assert.equal(schema.properties.deviceSecret.writeOnly, true);
   for (const status of ["200", "400", "401", "403", "406", "413", "415", "429", "500"]) assert.ok(operation.responses[status]);
-  assert.equal(spec.paths["/installations/{installationId}/readings"], undefined);
+  assert.equal(spec.paths["/installations/{installationId}/readings"].get, undefined);
 });
