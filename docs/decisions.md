@@ -59,6 +59,12 @@ This file records choices, their reasons, and unresolved questions. Concrete sch
 - **Seed reason:** Fixed profiles make results reproducible; lookup keys and insert-only writes make interrupted runs resumable without resetting IDs, statuses, credentials, or history. Preserve the former demo separately rather than mixing it into the full dataset.
 - **Time choice:** Store UTC instants and display public reading timestamps in Sri Lankan time, matching the operational local-day interpretation without shifting measurements.
 
+## D11 - Controlled user seeding
+
+- **Choice:** Provision the 36 configured admin/analyst accounts through a separate setup command, resolving existing geographic public IDs and hashing passwords with salted scrypt. See the [architecture](architecture.md#user-seeding) and [README](../README.md#user-accounts) for the contract and operation.
+- **Reason:** Keeping account setup separate from synthetic readings avoids coupling credentials to dataset generation. Insert-only email upserts preserve subsequent password rotations and access changes. Complete-document validation and transactional verification protect jurisdiction constraints and prevent partially provisioned accounts.
+- **Credentials:** Use the ignored `seed-users.env` as the account source and `.env` for database configuration. Do not expose passwords/hashes or add user-management routes.
+
 ## Pending decisions
 
 | Topic | Decision needed |

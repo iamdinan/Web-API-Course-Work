@@ -13,7 +13,8 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "test": "node --test",
-    "seed": "node scripts/seed.js"
+    "seed": "node scripts/seed.js",
+    "seed:users": "node scripts/seed-users.js"
   },
   "dependencies": {
     "express": "^5.2.1",

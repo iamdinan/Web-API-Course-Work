@@ -58,6 +58,23 @@ The seed is setup tooling and may restore missing fixture history for an inactiv
 
 The former two-installation demo is preserved separately in `seed_fixture_archive`, including copies of the shared Western/Colombo parents reused in the live hierarchy. The current seed leaves the archive untouched. Completed migration tools and the one-off verifier were removed; their history remains in the [prompt log](prompt-log.md).
 
+### User seeding
+
+`scripts/seed-users.js` provisions 36 accounts from the ignored `seed-users.env` file using existing geography. [seed-users.env.example](../seed-users.env.example) lists all required keys without real credentials:
+
+| Accounts | Role | Read scope | Regional reference |
+| --- | --- | --- | --- |
+| 1 admin | `admin` | `national` | None |
+| 1 national analyst | `user` | `national` | None |
+| 9 provincial analysts | `user` | `province` | Existing province public UUID only |
+| 25 district analysts | `user` | `district` | Existing district public UUID only |
+
+Validate every credential pair and normalized-email uniqueness before account writes. Resolve provinces by exact name and districts by exact name within their expected province; missing/ambiguous geography is an error. Generate random public UUIDs for new users and salted scrypt `passwordHash` values (`scrypt$salt$hash`); store no plaintext passwords and add no `active` field.
+
+Within one transaction, fully validate new User documents, then upsert by email using only `$setOnInsert`. This setup-only raw bulk operation bypasses query validation but receives fully validated documents. Existing users are skipped without changing any stored field. Verify all configured users before commit: validate their schema/parent references, compare newly inserted fields with the prepared values, and compare complete existing documents with their pre-run snapshots. Verification failure rolls back account inserts. Preserve valid existing roles/jurisdictions even when they differ from the seed plan and report only aggregate differences.
+
+User seeding neither creates geography nor modifies installation/history data or unrelated users. The dataset seed remains separate. See the [README](../README.md#user-accounts) for credential-file keys, commands, and safe verification output. No user-management HTTP route is introduced.
+
 ## Resource surface
 
 Prefix every path below with `/api/v1.0`. Each row is one path. “User” means an authenticated SLSEA principal with read access to that jurisdiction, including admins with national analyst access to every User GET below. “Admin” means role `admin`, which additionally grants installation creation, status updates to inactive, and hard deletion of installations without readings.
