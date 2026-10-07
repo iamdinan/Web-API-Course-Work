@@ -17,11 +17,25 @@ Meters create readings. SLSEA users read data within their assigned jurisdiction
 | GenerationReading | `publicId`, `installationId`, `recordedAt`, `powerKw`, `energyKwh`, `voltageV`, `receivedAt` | Append-only; unique `(installationId, recordedAt)`; nonnegative measurements |
 | User | `publicId`, `email`, `passwordHash`, `role`, `readScope`, optional `provinceId`/`districtId` | Unique email; role `user` or `admin`; jurisdiction matches read scope; admins require `readScope=national` without regional assignment; no `active` field |
 
-- Generate immutable UUID v4 `publicId` values. Use them in URLs, parent references, response `id` fields, `Location`, and JWT claims.
+- Generate randomly generated, immutable UUID v4 `publicId` values. Use them in URLs, parent references, response `id` fields, `Location`, and JWT claims.
+- Express public reading timestamps in Sri Lankan time (Asia/Colombo, ISO 8601 with `+05:30`). Store BSON dates as UTC instants; formatting must not shift the stored measurement time.
 - Keep MongoDB `_id` internal. Disable Mongoose's `id` virtual derived from `_id`; omit `_id`, `__v`, and credential hashes from JSON.
 - Index `publicId` uniquely on every model and readings on `{ installationId: 1, recordedAt: -1, publicId: -1 }`. Bound regional and time-window queries in MongoDB.
 
-Seed with fixed public IDs: 9 provinces, 25 districts, at least 20 substations, 200 installations, and seven days of readings per installation. Upsert geography and installations by `publicId`; upsert readings by `(installationId, recordedAt)` while preserving their IDs.
+Seed with random UUID v4 public IDs: 9 provinces, 25 districts, at least 20 substations, 200 installations, and seven days of readings per installation. Reuse geography by name within its parent and installations by unique meter ID; upsert readings by `(installationId, recordedAt)` while preserving their IDs. Generate IDs only for missing records and use the stored parent IDs for references.
+
+The first implemented seed is intentionally limited to one province, one district,
+one substation, two installations, and three readings per installation, with no
+users. `npm run seed` builds declared indexes, inserts missing fixture records in
+an Atlas transaction, prints total collection counts, and disconnects. Stable fixture lookup keys
+and measurement times (08:30, 08:40, 08:50 on 2026-10-07 in Sri Lanka) prevent duplicates. Existing records, including inactive status,
+credential hashes, and reading IDs/values, are preserved. The full seed remains
+deferred. References are validated public UUID strings, not ObjectId references.
+Parent-plus-publicId indexes support hierarchy lists; readings have both the
+unique timestamp index and descending history index specified above, plus a
+global time/publicId index for regional history. Meter ID and normalized email
+have unique indexes. User jurisdiction is national with no assignment, province
+with only provinceId, or district with only districtId; admins require national.
 
 ## Resource surface
 

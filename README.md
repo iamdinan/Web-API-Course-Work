@@ -38,3 +38,34 @@ services/models as business logic and persistence are introduced. Import shared
 configuration for URLs instead of hardcoding the prefix in features.
 
 Run `npm test` to verify the health and configuration contracts.
+
+Mongoose models live in `src/models`, with shared UUID validation and public
+JSON serialization in `shared.js`. References store parent `publicId` strings,
+not MongoDB ObjectIds. Normal validated document writes check parent existence;
+future services must coordinate concurrent ingestion/deletion with transactions
+as described in the architecture. Reading model updates and deletions are
+blocked, except insert-only upserts. Raw collection access bypasses Mongoose
+guards and must not be used for API writes. Validate complete User documents
+when changing roles/jurisdictions; partial query validators cannot enforce
+cross-field jurisdiction rules.
+
+Run `npm run seed` to connect using `MONGODB_URI`, create declared indexes, and
+seed a small fixture in a transaction. On an empty database, totals are one
+province, one district, one substation, two installations, six readings (three
+per installation), and zero users. It prints collection totals and disconnects
+on completion or failure. Existing unrelated records are included in totals.
+The full coursework dataset is deferred.
+
+The fixture generates random UUID v4 IDs for missing records and uses fixed
+measurement timestamps at 08:30, 08:40, and 08:50 Sri Lankan time on 2026-10-07.
+Reruns reuse geography by name within its parent and installations by meter ID.
+Public reading JSON uses `+05:30`; MongoDB stores the same instants as UTC dates,
+so Compass may display `Z` (for example, 03:00 UTC is 08:30 Sri Lankan time).
+Reruns insert only missing records: existing installation status, credentials,
+geography, reading values, and reading IDs are preserved. No users or admin
+accounts are provisioned. Optional local `SEED_DEVICE_SECRET_1` and
+`SEED_DEVICE_SECRET_2` environment values are salted and scrypt-hashed only when
+creating the installations. Without them, random disposable secrets are used
+and never printed or retained. Changing these values does not rotate existing
+credentials. The seed is setup data and may restore missing historical fixture
+readings for an inactive installation; it is not a device ingestion endpoint.

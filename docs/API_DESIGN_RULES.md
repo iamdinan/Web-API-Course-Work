@@ -4,6 +4,8 @@ This API uses the applicable WSO2 REST design rules. `architecture.md` lists the
 
 ## Responses
 
+Public reading timestamps use ISO 8601 Sri Lankan time (Asia/Colombo, `+05:30`), preserving the UTC instant stored in MongoDB. Public IDs are randomly generated UUID v4 values.
+
 | Status | When | Body and key headers |
 | --- | --- | --- |
 | 200 OK | Successful GET, token exchange, or installation deactivation | JSON; `Content-Type: application/json`. GET may include `ETag` and a reliable `Last-Modified`. Installation GET and PATCH return the strong ETag of the public installation representation; PATCH returns its resulting public fields. |

@@ -3,7 +3,7 @@
 ## D01 — Hierarchy and public IDs
 
 - **Choice:** Store the hierarchy through parent references; User is separate. Use UUID v4 `publicId` values externally and keep MongoDB `_id` internal.
-- **Reason:** One authoritative parent relationship determines geography. Fixed public IDs make seed runs repeatable.
+- **Reason:** One authoritative parent relationship determines geography. Random UUID v4 IDs identify new records; stable fixture lookup keys make seed runs repeatable without replacing stored IDs.
 
 ## D02 — Meter identity and history
 
@@ -51,10 +51,18 @@
 ## D09 — MongoDB connection lifecycle
 
 - **Choice:** Use the installed Mongoose dependency with `MONGODB_URI` imported from central configuration. `src/config/database.js` owns connection and disconnection. Server startup waits for the connection and fails without opening the HTTP listener if connection fails; shutdown closes HTTP and MongoDB connections.
-- **Security:** Connection failures use generic diagnostic messages without printing the URI or raw driver errors. Keep credentials in the ignored `.env`; the example uses a credential-free local URI.
+- **Diagnostics:** Log the actual MongoDB connection error and propagate the original connection failure to the startup handler. Do not explicitly log the configured URI. Keep credentials in the ignored `.env`; the example uses a credential-free local URI.
 - **Verification:** Syntax and module loading only; the user will manually verify the real database connection. No database writes or changes to the public health contract.
 
-## Unresolved issues
+## D10 — Initial models and small seed
+
+- **Choice:** Implement all six Mongoose schemas with immutable UUID v4 public IDs, public UUID parent strings, validation, explicit collection names, safe JSON output, and unique/query indexes. Credential hashes are excluded from normal projections and JSON. Normal document validation checks parents and User role/scope assignments; future services must use complete-document validation for User changes and transaction coordination for ingestion/deletion.
+- **Reading retention:** Reading fields are immutable and model update/delete/replacement operations are rejected. A timestamp-keyed `$setOnInsert` upsert is allowed for setup; raw MongoDB collection operations bypass these guards.
+- **Initial seed:** Only one province/district/substation, two installations, three readings each, no users. Random UUID v4 IDs for new records, stable geography-name/parent and meter-ID lookup keys, fixed measurement times, insert-only upserts, Atlas transaction, index creation without dropping indexes, counts and disconnect. Existing IDs, status, credentials, geography and readings are never reset. Full dataset deferred at the user's request.
+- **Time:** Seed measurement times are explicit Sri Lankan local times with `+05:30`. Reading JSON uses the same offset; BSON Date fields remain UTC instants. Local-day calculations use Asia/Colombo boundaries.
+- **Credentials:** Seed uses salted scrypt hashes from optional local seed secret variables or random disposable secrets, only for new installations. Never print or commit plaintext secrets.
+
+## Pending decisions
 
 | Topic | Decision needed |
 | --- | --- |
