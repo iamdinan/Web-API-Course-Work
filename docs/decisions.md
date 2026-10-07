@@ -42,7 +42,13 @@
 - **Handoff:** Design only; implement validation, role authorization, status checks, persistence, OpenAPI, and verification together. Verify admin national reads across all read routes, user jurisdiction boundaries, scoped counts/paging/validators, admin-only writes, extra-field rejection, duplicate meters, 201 Location, repeat status updates, inactive-device rejection, scoped retained history, empty active/inactive deletion, readings-conflict 409 without mutation, repeat-delete 404, stale device tokens, concurrent ingestion/deletion, summary/cache changes, and shared 429.
 - **Conditional verification:** During implementation, check optional strong matching, atomic 412 without mutation, PATCH ETags, and DELETE's 412/409 ordering under concurrent writes/ingestion. OpenAPI and tests are deferred to development.
 
-## Unresolved issues
+## D08 — Environment configuration and health
+
+- **Choice:** Load `.env` centrally with Node.js's built-in environment loader. Export the validated `API_BASE_URL` path (default `/api/v1.0`) and `PORT`; process environment takes precedence. Mount relative Express feature routes under the imported prefix.
+- **Health:** Public GET `/health` returns 200 `{ "status": "ok" }` for application liveness only, with a stable strong ETag and `Cache-Control: no-cache`. Matching `If-None-Match` returns bodyless 304; Accept excluding JSON returns bodyless 406. Database readiness is deferred until persistence is connected.
+- **Structure:** Separate configuration, application setup, listener startup, routes, controllers, and shared middleware. Add services and models when the feature needs business logic or persistence.
+
+## Pending decisions
 
 | Topic | Decision needed |
 | --- | --- |

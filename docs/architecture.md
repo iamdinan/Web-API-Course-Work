@@ -56,6 +56,7 @@ Prefix every path below with `/api/v1.0`. Each row is one path. “User” means
 
 | Path | Method | Access |
 | --- | --- | --- |
+| `/health` | GET | Public application liveness; returns `{ "status": "ok" }`, no database check |
 | `/auth/device-tokens` | POST | Meter credential exchange |
 | `/auth/user-tokens` | POST | User or admin credential exchange |
 | `/openapi.json` | GET | Public OpenAPI specification |
@@ -101,4 +102,4 @@ Use shared counters with atomic updates and expiry across deployed instances. Re
 
 See `API_DESIGN_RULES.md` for the HTTP response contract and `decisions.md` for pending choices.
 
-OpenAPI and runtime verification will be added during development; the design contract is maintained in these documents.
+The initial implementation provides `/health` and `/openapi.json`; `docs/openapi.json` describes implemented routes only. The configured `API_BASE_URL` defaults to `/api/v1.0` and is imported at the API router mount. Other resource routes, Swagger UI, database readiness, and shared rate limits remain planned.

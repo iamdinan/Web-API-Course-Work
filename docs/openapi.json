@@ -1,0 +1,40 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Solar Generation API", "version": "1.0.0", "description": "Currently implemented endpoints. Health reports application liveness only." },
+  "servers": [{ "url": "/api/v1.0" }],
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "getHealth",
+        "summary": "Check application liveness",
+        "description": "Public endpoint. Does not check MongoDB or other dependencies. Supports If-None-Match using a stable strong ETag.",
+        "security": [],
+        "parameters": [{ "name": "If-None-Match", "in": "header", "schema": { "type": "string" } }],
+        "responses": {
+          "200": {
+            "description": "Application is running",
+            "headers": {
+              "ETag": { "schema": { "type": "string" }, "description": "Strong representation validator" },
+              "Cache-Control": { "schema": { "type": "string", "enum": ["no-cache"] } }
+            },
+            "content": { "application/json": { "schema": { "type": "object", "required": ["status"], "additionalProperties": false, "properties": { "status": { "type": "string", "enum": ["ok"] } } }, "example": { "status": "ok" } } }
+          },
+          "304": { "description": "Unchanged representation; no body", "headers": { "ETag": { "schema": { "type": "string" } }, "Cache-Control": { "schema": { "type": "string" } } } },
+          "406": { "description": "Accept excludes JSON; no body" }
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "operationId": "getOpenApi",
+        "summary": "Get the implemented API specification",
+        "security": [],
+        "responses": {
+          "200": { "description": "OpenAPI document with the configured base path", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "304": { "description": "Unchanged specification; no body" },
+          "406": { "description": "Accept excludes JSON; no body" }
+        }
+      }
+    }
+  }
+}

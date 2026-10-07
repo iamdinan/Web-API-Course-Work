@@ -1,0 +1,15 @@
+const express = require('express');
+const healthRouter = require('./health.routes');
+const specification = require('../../docs/openapi.json');
+const { apiBaseUrl } = require('../config/env');
+
+const router = express.Router();
+router.use('/health', healthRouter);
+router.get('/openapi.json', (req, res) => {
+  res.set('Cache-Control', 'no-cache').json({
+    ...specification,
+    servers: [{ url: apiBaseUrl }],
+  });
+});
+
+module.exports = router;

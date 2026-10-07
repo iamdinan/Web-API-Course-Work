@@ -22,6 +22,14 @@ This API uses the applicable WSO2 REST design rules. `architecture.md` lists the
 
 All JSON errors use `{ "code": "...", "message": "...", "details": [] }`. Never include credentials or stack traces.
 
+The public health GET returns `200` with `{ "status": "ok" }` for application
+liveness only. It uses a stable strong ETag and `Cache-Control: no-cache`;
+matching conditional requests return bodyless 304. JSON negotiation returns
+bodyless 406 when Accept excludes JSON. Shared rate limits and database readiness
+are deferred in the initial implementation. Malformed JSON returns 400
+`INVALID_JSON`; bodies exceeding Express's 100 KB limit return 413
+`PAYLOAD_TOO_LARGE`, both using the standard error schema.
+
 ## Resource and query rules
 
 - Use `/api/v1.0` as the common base path, lowercase hyphenated segments, plural collection nouns, and IDs after collection names. Nest collections under their parent. The district summary is a top-level, verb-named processing function.
