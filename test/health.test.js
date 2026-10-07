@@ -4,6 +4,9 @@ const { once } = require('node:events');
 const { execFileSync, spawnSync } = require('node:child_process');
 const path = require('node:path');
 const http = require('node:http');
+process.env.JWT_SIGNING_KEY = 'health-test-only-key-with-at-least-32-bytes';
+process.env.JWT_ISSUER = 'test-issuer';
+process.env.JWT_AUDIENCE = 'test-audience';
 const app = require('../src/app');
 const { apiBaseUrl } = require('../src/config/env');
 

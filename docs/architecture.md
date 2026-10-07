@@ -138,6 +138,14 @@ Prefix every path below with `/api/v1.0`. Each row is one path. “User” means
 - Users and admins exchange email and password through `/auth/user-tokens`. JWTs contain `actor=user`, the user's public ID, and `role`. Role `user` tokens carry a national/province/district read scope and assigned jurisdiction; role `admin` tokens carry `readScope=national` without regional assignment plus `installation-create`, `installation-deactivate`, and `installation-delete`. Verify signature, allowed algorithm, issuer, audience, expiry, and the principal's continued existence. Derive effective authorization from the current stored role and jurisdiction, rather than relying on stale token claims. User has no `active` attribute.
 - Check the actual geographic ancestry before every lookup, list, count, overview, summary, or cache validator. Use the HTTP contract for inaccessible-resource and forbidden-action responses. Keep signing keys and credentials in environment configuration.
 
+### User-token implementation
+
+The implemented user-token exchange reads the normalized email from MongoDB with explicit access to `passwordHash`, verifies the seed's salted scrypt format using a timing-safe comparison, and performs a dummy derivation for absent users or invalid stored hashes. Input validation, HTTP responses, authentication service, and shared counters remain separate from the route.
+
+HS256 tokens use `sub` for the User public UUID, `actor=user`, `role`, `readScope`, and only the applicable `provinceId` or `districtId`. Admin tokens also include `permissions=[installation-create, installation-deactivate, installation-delete]`. Claims are selected from stored fields; request bodies cannot supply identity or authorization. Include configured `iss`/`aud` and standard `iat`/`exp`. Signing key, issuer, audience, and expiry are configured as described in the [README](../README.md#getting-started). No token verification middleware or protected resource route is introduced in this feature; future consumers must apply the security checks above rather than trust claims alone.
+
+Login counters live in the operational `token_rate_limits` collection, outside the six public domain models. Hashed IP/email keys use unique `_id` values; atomic update pipelines reset expired windows or increment the current count, and a TTL index eventually removes expired counters. Retry a concurrent initial-upsert collision against the winning key. Database failures fail closed with the standard error. Token issuance consumes no User writes and does not change credentials or assignments.
+
 ## Rate limits
 
 Use shared counters with atomic updates and expiry across deployed instances. The HTTP contract defines rate-limit responses.

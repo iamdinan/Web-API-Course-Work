@@ -1,7 +1,15 @@
 {
   "openapi": "3.0.3",
-  "info": { "title": "Solar Generation API", "version": "1.0.0", "description": "Currently implemented endpoints. Health reports application liveness only." },
-  "servers": [{ "url": "/api/v1.0" }],
+  "info": {
+    "title": "Solar Generation API",
+    "version": "1.0.0",
+    "description": "Implemented endpoints only: application liveness, OpenAPI, and user/admin JWT credential exchange."
+  },
+  "servers": [
+    {
+      "url": "/api/v1.0"
+    }
+  ],
   "paths": {
     "/health": {
       "get": {
@@ -9,18 +17,75 @@
         "summary": "Check application liveness",
         "description": "Public endpoint. Does not check MongoDB or other dependencies. Supports If-None-Match using a stable strong ETag.",
         "security": [],
-        "parameters": [{ "name": "If-None-Match", "in": "header", "schema": { "type": "string" } }],
+        "parameters": [
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Application is running",
             "headers": {
-              "ETag": { "schema": { "type": "string" }, "description": "Strong representation validator" },
-              "Cache-Control": { "schema": { "type": "string", "enum": ["no-cache"] } }
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong representation validator"
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-cache"
+                  ]
+                }
+              }
             },
-            "content": { "application/json": { "schema": { "type": "object", "required": ["status"], "additionalProperties": false, "properties": { "status": { "type": "string", "enum": ["ok"] } } }, "example": { "status": "ok" } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "status"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok"
+                      ]
+                    }
+                  }
+                },
+                "example": {
+                  "status": "ok"
+                }
+              }
+            }
           },
-          "304": { "description": "Unchanged representation; no body", "headers": { "ETag": { "schema": { "type": "string" } }, "Cache-Control": { "schema": { "type": "string" } } } },
-          "406": { "description": "Accept excludes JSON; no body" }
+          "304": {
+            "description": "Unchanged representation; no body",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "406": {
+            "description": "Accept excludes JSON; no body"
+          }
         }
       }
     },
@@ -30,9 +95,316 @@
         "summary": "Get the implemented API specification",
         "security": [],
         "responses": {
-          "200": { "description": "OpenAPI document with the configured base path", "content": { "application/json": { "schema": { "type": "object" } } } },
-          "304": { "description": "Unchanged specification; no body" },
-          "406": { "description": "Accept excludes JSON; no body" }
+          "200": {
+            "description": "OpenAPI document with the configured base path",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Unchanged specification; no body"
+          },
+          "406": {
+            "description": "Accept excludes JSON; no body"
+          }
+        }
+      }
+    },
+    "/auth/user-tokens": {
+      "post": {
+        "operationId": "createUserToken",
+        "summary": "Exchange user/admin credentials for a short-lived JWT",
+        "security": [],
+        "description": "Accept only email and password. Normalize email by trimming/lowercasing; preserve the password exactly. Claims come from the current MongoDB User: sub (public UUID), actor=user, role, readScope, optional provinceId or districtId; admins also receive installation-create, installation-deactivate, installation-delete in permissions. HS256 signatures include configured iss, aud, iat, and exp. No refresh token. Responses are not cacheable. Validly shaped attempts use shared MongoDB limits of 5 per 15 minutes by IP and normalized account email. No passwords, hashes, or internal IDs are returned.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "email",
+                  "password"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "format": "email"
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 1,
+                    "writeOnly": true,
+                    "description": "Must contain a non-whitespace character; surrounding spaces are significant."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Credentials verified; signed access token",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "access_token",
+                    "token_type",
+                    "expires_in"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "access_token": {
+                      "type": "string"
+                    },
+                    "token_type": {
+                      "type": "string",
+                      "enum": [
+                        "Bearer"
+                      ]
+                    },
+                    "expires_in": {
+                      "type": "integer",
+                      "minimum": 60,
+                      "maximum": 3600,
+                      "description": "Configured token lifetime in seconds; default 900."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON or invalid request fields.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "fields": {
+                    "value": {
+                      "code": "INVALID_REQUEST",
+                      "message": "Provide only a valid email and a nonempty password.",
+                      "details": []
+                    }
+                  },
+                  "json": {
+                    "value": {
+                      "code": "INVALID_JSON",
+                      "message": "Request body must be valid JSON.",
+                      "details": []
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid email or password.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "Bearer"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "INVALID_CREDENTIALS",
+                  "message": "Invalid email or password.",
+                  "details": []
+                }
+              }
+            }
+          },
+          "406": {
+            "description": "Accept excludes JSON; no body",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request body is too large.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "PAYLOAD_TOO_LARGE",
+                  "message": "Request body is too large.",
+                  "details": []
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Request body must use application/json.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "UNSUPPORTED_MEDIA_TYPE",
+                  "message": "Request body must use application/json.",
+                  "details": []
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many login attempts. Try again later.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "description": "Seconds until the exceeded counter window expires."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "RATE_LIMIT_EXCEEDED",
+                  "message": "Too many login attempts. Try again later.",
+                  "details": []
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected error occurred.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "INTERNAL_SERVER_ERROR",
+                  "message": "An unexpected error occurred.",
+                  "details": []
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "details"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "details": {
+            "type": "array",
+            "items": {}
+          }
         }
       }
     }

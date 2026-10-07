@@ -65,6 +65,12 @@ This file records choices, their reasons, and unresolved questions. Concrete sch
 - **Reason:** Keeping account setup separate from synthetic readings avoids coupling credentials to dataset generation. Insert-only email upserts preserve subsequent password rotations and access changes. Complete-document validation and transactional verification protect jurisdiction constraints and prevent partially provisioned accounts.
 - **Credentials:** Use the ignored `seed-users.env` as the account source and `.env` for database configuration. Do not expose passwords/hashes or add user-management routes.
 
+## D12 - User credential exchange
+
+- **Choice:** Implement only the user/admin token exchange with HS256, a private environment signing key, configured issuer/audience, and a bounded short lifetime. Use MongoDB fields for all authorization claims and the standard `sub` claim for the public UUID. Use [jsonwebtoken](https://github.com/auth0/node-jsonwebtoken) for signing.
+- **Reason:** Reuse seeded salted scrypt hashes, prevent request-supplied privilege claims, and keep tokens independent of internal MongoDB identity. Identical invalid-credential errors and dummy password derivation reduce account disclosure; no-store responses prevent credential caching.
+- **Limits:** Adopt the initial 5-attempt/15-minute IP/account threshold for this endpoint with atomic shared MongoDB counters. Other rate thresholds and deployment/proxy configuration remain pending. Device authentication, refresh tokens, and protected-route verification are outside this feature.
+
 ## Pending decisions
 
 | Topic | Decision needed |
@@ -73,4 +79,4 @@ This file records choices, their reasons, and unresolved questions. Concrete sch
 | Measurement validation | Set meter clock-drift and measurement bounds. |
 | Energy counter resets | Finalize reset/baseline behavior for district energy calculations. |
 | Deployment | Choose the deployment provider and HTTPS configuration. |
-| Rate thresholds | Confirm or revise the initial architecture thresholds before implementing shared limits. |
+| Rate thresholds | Confirm or revise thresholds for remaining traffic classes; user-token issuance uses the initial 5-attempt/15-minute threshold. |
