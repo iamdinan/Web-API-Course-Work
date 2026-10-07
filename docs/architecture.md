@@ -138,6 +138,20 @@ Prefix every path below with `/api/v1.0`. Each row is one path. “User” means
 - Users and admins exchange email and password through `/auth/user-tokens`. JWTs contain `actor=user`, the user's public ID, and `role`. Role `user` tokens carry a national/province/district read scope and assigned jurisdiction; role `admin` tokens carry `readScope=national` without regional assignment plus `installation-create`, `installation-deactivate`, and `installation-delete`. Verify signature, allowed algorithm, issuer, audience, expiry, and the principal's continued existence. Derive effective authorization from the current stored role and jurisdiction, rather than relying on stale token claims. User has no `active` attribute.
 - Check the actual geographic ancestry before every lookup, list, count, overview, summary, or cache validator. Use the HTTP contract for inaccessible-resource and forbidden-action responses. Keep signing keys and credentials in environment configuration.
 
+### User-token implementation
+
+The implemented user-token exchange reads the normalized email from MongoDB with explicit access to `passwordHash`, verifies the seed's salted scrypt format using a timing-safe comparison, and performs a dummy derivation for absent users or invalid stored hashes. Input validation, HTTP responses, authentication service, and shared counters remain separate from the route.
+
+HS256 tokens use `sub` for the User public UUID, `actor=user`, `role`, `readScope`, and only the applicable `provinceId` or `districtId`. Admin tokens also include `permissions=[installation-create, installation-deactivate, installation-delete]`. Claims are selected from stored fields; request bodies cannot supply identity or authorization. Include configured `iss`/`aud` and standard `iat`/`exp`. Signing key, issuer, audience, and expiry are configured as described in the [README](../README.md#getting-started). The verified-user middleware and protected province list below apply the current-principal security checks; future protected routes must use the same checks rather than trust claims alone.
+
+Login and user-read counters live in the operational `token_rate_limits` collection, outside the six public domain models. Hashed IP/email keys use unique `_id` values; atomic update pipelines reset expired windows or increment the current count, and a TTL index eventually removes expired counters. Retry a concurrent initial-upsert collision against the winning key. Database failures fail closed with the standard error. Token issuance consumes no User writes and does not change credentials or assignments.
+
+### Verified users and province access
+
+`verifyUserJwt` reads a bearer token, verifies the configured HS256 algorithm/signature/issuer/audience and expiry, requires `actor=user`, a public UUID `sub`, and bounded `iat`/`exp`, then fetches the current User by public UUID without credential fields. Invalid tokens, absent users, and invalid stored assignments fail authentication. Database failures fail closed. Attach only the current stored identity/role/scope and applicable jurisdiction as `req.user`; derive admin permissions again from the stored role and ignore authorization claims in the token.
+
+The first protected route is `GET /provinces`. National users/admins have an unrestricted province query; provincial users are constrained to their stored province UUID; district users resolve their assigned district's parent province. Filter district/substation lookups within that same jurisdiction, including preventing access to sibling districts for district users. Query provinces and counts with the resolved public-UUID filter before paging; compose public fields and scoped validators only afterward. Missing geography produces no visible province. The shared user read limit uses the User public UUID, with identical limits for admins and analysts. See the [HTTP rules](API_DESIGN_RULES.md#protected-province-list) for list, query, cache, and rejection behavior.
+
 ## Rate limits
 
 Use shared counters with atomic updates and expiry across deployed instances. The HTTP contract defines rate-limit responses.

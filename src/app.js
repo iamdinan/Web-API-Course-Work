@@ -7,6 +7,9 @@ const app = express();
 app.disable('x-powered-by');
 app.set('etag', 'strong');
 app.use(apiBaseUrl, (req, res, next) => {
+  if (req.method === 'POST' && req.path === '/auth/user-tokens') {
+    res.set({ 'Cache-Control': 'no-store', Pragma: 'no-cache' });
+  }
   if (!req.accepts('json')) return res.status(406).end();
   next();
 }, express.json(), apiRouter);

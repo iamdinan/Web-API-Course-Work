@@ -6,7 +6,7 @@ A Node.js/Express API backed by Mongoose and MongoDB Atlas for solar generation 
 
 ## Current implementation
 
-The application currently provides public `/health` and `/openapi.json` endpoints, six data models, the full dataset seed, and controlled user seeding. Authentication, resource endpoints, Swagger UI, database readiness, and shared rate limits remain planned. The architecture describes the target API; OpenAPI describes implemented routes only.
+The application currently provides public `/health` and `/openapi.json`, user/admin login at `POST /auth/user-tokens`, protected `GET /provinces`, six data models, the full dataset seed, and controlled user seeding. Login and protected reads use shared MongoDB limits. Device authentication, remaining resource endpoints, Swagger UI, database readiness, and other traffic limits remain planned. The architecture describes the target API; OpenAPI describes implemented routes only.
 
 ## Getting started
 
@@ -15,13 +15,18 @@ Requires Node.js 24 or later and access to MongoDB.
 1. Install dependencies: `npm ci`.
 2. Copy `.env.example` to `.env`.
 3. Set `MONGODB_URI` to your connection string, including the intended database name.
-4. Start the application: `npm run dev`.
+4. Set the JWT variables below; generate a private signing key locally, for example with `node -e "console.log(require('node:crypto').randomBytes(48).toString('hex'))"`.
+5. Start the application: `npm run dev`.
 
 | Setting | Purpose | Default |
 | --- | --- | --- |
 | `MONGODB_URI` | Database connection URI | Required; example file uses local MongoDB |
 | `API_BASE_URL` | Shared API path prefix | `/api/v1.0` |
 | `PORT` | Local HTTP listener port | `3000` |
+| `JWT_SIGNING_KEY` | Private HS256 signing key; at least 32 bytes | Required |
+| `JWT_ISSUER` | Token issuer (`iss`) | Required; example: `solar-generation-api` |
+| `JWT_AUDIENCE` | Token audience (`aud`) | Required; example: `solar-generation-users` |
+| `JWT_EXPIRES_IN_SECONDS` | Token lifetime, 60 to 3600 seconds | `900` |
 
 Existing process environment variables override `.env`. Keep credentials out of source control. Local development uses HTTP; production HTTPS is intended to terminate at the deployment proxy.
 
@@ -33,7 +38,7 @@ Startup connects to MongoDB before opening the HTTP listener. Watch for `MongoDB
 | --- | --- |
 | `npm run dev` | Start with automatic restart on source changes |
 | `npm start` | Start without watch mode |
-| `npm test` | Run offline health/configuration, model, dataset-seed, and user-seed tests |
+| `npm test` | Run offline health/configuration, model, seed, and user-login tests |
 | `npm run seed` | Insert the full sample dataset into the configured database |
 | `npm run seed:users` | Insert and verify the 36 configured accounts without changing existing users |
 
@@ -45,6 +50,8 @@ With the default configuration:
 | --- | --- |
 | `http://localhost:3000/api/v1.0/health` | Application liveness; returns `{"status":"ok"}` |
 | `http://localhost:3000/api/v1.0/openapi.json` | Implemented OpenAPI specification |
+| `http://localhost:3000/api/v1.0/auth/user-tokens` | POST email/password to obtain a user/admin access token |
+| `http://localhost:3000/api/v1.0/provinces` | GET visible provinces using `Authorization: Bearer <access_token>` |
 
 Health does not query MongoDB. For a manual startup check, confirm the connection message and request the health URL. See the [HTTP contract](docs/API_DESIGN_RULES.md) for response and conditional-request behavior.
 
@@ -81,13 +88,26 @@ All 36 credential pairs and existing geography references are required on every 
 
 The command verifies all configured accounts before committing its transaction and prints aggregate inserted/preserved/verified counts and actual role/scope totals. Existing assignments that differ from the seed plan are reported by count and preserved. Passwords and hashes are never printed. Run the command again to verify a zero-insert rerun; see [architecture](docs/architecture.md#user-seeding) for the persistence contract.
 
+## User login
+
+POST JSON containing only `email` and `password` to `/api/v1.0/auth/user-tokens`. A successful login returns `access_token`, `token_type=Bearer`, and `expires_in` in seconds. User ID, role, read scope, and regional assignment come from MongoDB. Unknown emails and incorrect passwords share the same 401 error.
+
+Login responses use `Cache-Control: no-store`. Shared counters allow 5 attempts per 15 minutes per IP and normalized email; excess attempts return 429 with `Retry-After`. This endpoint issues access tokens only; device login and remaining resource routes remain planned. See the [HTTP contract](docs/API_DESIGN_RULES.md#user-token-exchange) and [OpenAPI](docs/openapi.json) for request/error details.
+
+## Protected province list
+
+Send the access token in `Authorization: Bearer <access_token>` to `GET /api/v1.0/provinces`. National analysts/admins see all provinces; provincial analysts see their assigned province; district analysts see their district's parent province. Each request verifies the JWT and reloads current User access from MongoDB, so deleted users and stale privileges cannot bypass authorization.
+
+The list returns `count`, `next`, `previous`, and public `items`. It accepts `provinceId`, `districtId`, `substationId`, `offset` (default 0), and `limit` (default 50, maximum 200); out-of-scope filters return an empty list. Responses use private scoped ETags; matching `If-None-Match` returns bodyless 304 only after authentication. Missing/invalid/expired/non-user tokens return 401. Shared read limits are 120/minute per User, including admins.
+
 ## Project layout
 
 | Path | Responsibility |
 | --- | --- |
 | `src/config/` | Environment configuration and database connection |
 | `src/routes/`, `src/controllers/` | Routing and HTTP responses |
-| `src/middleware/` | Common request and error handling |
+| `src/middleware/` | Common request, validation, and error handling |
+| `src/services/` | Password verification, JWT issuance, and shared login counters |
 | `src/models/` | Mongoose schemas and shared model helpers |
 | `src/app.js` | Express application and API router mount |
 | `src/index.js` | Server startup and shutdown |

@@ -13,7 +13,7 @@ Public reading timestamps use ISO 8601 Sri Lankan time (Asia/Colombo, `+05:30`),
 | 204 No Content | Admin hard-deletes an installation with no readings | No body; no JSON Content-Type or deleted-resource validators. |
 | 304 Not Modified | Conditional GET matches current representation | **No body**; preserve relevant cache validators. |
 | 400 Bad Request | Invalid body, ID, filter, or time range | JSON error contract. |
-| 401 Unauthorized | Missing or invalid bearer token | JSON error; `WWW-Authenticate: Bearer`. |
+| 401 Unauthorized | Invalid login credentials, or missing/invalid bearer token | JSON error; `WWW-Authenticate: Bearer`. |
 | 403 Forbidden | Authenticated client attempts a forbidden action | JSON error. |
 | 404 Not Found | Missing or inaccessible atomic resource, or unknown route | JSON error; do not reveal inaccessible IDs. Unknown routes use `code=NOT_FOUND`. |
 | 406 Not Acceptable | `Accept` excludes JSON | No JSON body when the client does not accept JSON. |
@@ -29,6 +29,24 @@ All JSON errors use `{ "code": "...", "message": "...", "details": [] }`. Never 
 ### Health and parser behavior
 
 Public health GET returns `{ "status": "ok" }` with a stable strong ETag and `Cache-Control: no-cache`. Matching conditional requests return bodyless 304; Accept excluding JSON returns bodyless 406. Malformed JSON returns 400 `INVALID_JSON`. Oversized JSON uses the 413 response above. Health is application liveness, not a database readiness probe.
+
+## User token exchange
+
+`POST /auth/user-tokens` accepts an `application/json` object containing exactly `email` and `password` strings. Trim/lowercase email; require a valid email and a non-whitespace password, preserving the password's exact characters. Reject missing/unknown fields, arrays, objects in place of strings, and empty values with 400 `INVALID_REQUEST`; malformed JSON uses 400 `INVALID_JSON`. Unsupported Content-Type uses 415 `UNSUPPORTED_MEDIA_TYPE`.
+
+Success returns 200 `{ "access_token": "<signed JWT>", "token_type": "Bearer", "expires_in": 900 }`, where the lifetime is configured in seconds. Return `Cache-Control: no-store` and `Pragma: no-cache` for this POST, including errors; successful token responses have no ETag or Last-Modified. No refresh token is issued.
+
+Unknown users and password mismatches return the same 401 `INVALID_CREDENTIALS` with message `Invalid email or password.` and `WWW-Authenticate: Bearer`. Never include submitted credentials, stored hashes, or internal IDs in errors. Unexpected persistence/signing failures return the standard 500 error.
+
+After request validation and before password verification, apply shared 5-attempt/15-minute IP and normalized-email counters. Exceeded limits return 429 `RATE_LIMIT_EXCEEDED` with integer `Retry-After` seconds. Rejected request shapes do not consume these credential-attempt counters. JSON negotiation and the 100 KB parser limit follow the general rules above.
+
+## Protected province list
+
+`GET /provinces` requires a user bearer JWT. Missing/malformed/invalid/expired tokens, non-user actors, removed users, or invalid stored role/scope assignments return 401 `UNAUTHORIZED` with `WWW-Authenticate: Bearer`. Use one generic message, `A valid user bearer token is required.`; do not disclose token-validation details. Persistence failures remain sanitized 500s.
+
+Apply the current stored jurisdiction and optional geographic filters before count/paging. Return the standard list envelope with public `{ "id": "<UUID>", "name": "..." }` items ordered by name then public ID. Accept only single-valued `provinceId`, `districtId`, `substationId`, `offset`, and `limit`; malformed UUIDs, unknown/repeated fields, invalid paging, or conflicting ancestry among visible targets return 400 `INVALID_QUERY`. Unknown/out-of-scope filter targets return 200 with an empty scoped list.
+
+Successful responses use `Cache-Control: private, no-cache` and a stable strong ETag tied to the current principal and exact scoped representation. Omit Last-Modified because no reliable geography modification time is stored. Authenticate/reload User, apply the shared 120/minute user read limit, and scope the representation before conditional GET evaluation. Matching If-None-Match returns bodyless 304 with validators. Authentication, query, and rate-limit errors are not cacheable; 429 includes Retry-After seconds.
 
 ## Resource and query rules
 
