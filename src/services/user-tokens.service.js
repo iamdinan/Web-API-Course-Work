@@ -1,19 +1,8 @@
-const { scrypt, timingSafeEqual } = require("node:crypto");
-const { promisify } = require("node:util");
 const jwt = require("jsonwebtoken");
 const { User } = require("../models");
 const config = require("../config/jwt");
 const { currentUserPrincipal } = require("./user-principal");
-const scryptAsync = promisify(scrypt);
-const dummyHash = `scrypt$${"0".repeat(32)}$${"0".repeat(128)}`;
-
-async function verifyPassword(password, storedHash) {
-  const validFormat = typeof storedHash === "string" && /^scrypt\$[0-9a-f]{32}\$[0-9a-f]{128}$/.test(storedHash);
-  const [, salt, hash] = (validFormat ? storedHash : dummyHash).split("$");
-  const derived = await scryptAsync(password, salt, 64);
-  const matches = timingSafeEqual(derived, Buffer.from(hash, "hex"));
-  return validFormat && matches;
-}
+const { verifyPassword } = require("./passwords");
 
 async function issueUserToken(email, password) {
   const user = await User.findOne({ email }).select("publicId role readScope provinceId districtId +passwordHash").lean();

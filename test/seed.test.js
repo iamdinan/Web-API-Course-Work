@@ -2,9 +2,11 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { randomUUID } = require("node:crypto");
 const mongoose = require("mongoose");
+const { spawnSync } = require("node:child_process");
 const models = require("../src/models");
 const { createSites, generateReadings, EXPECTED, START, INTERVAL_MS, SAMPLES } = require("../scripts/seed-data");
 const { insertReadingBatch, seedHierarchy } = require("../scripts/seed");
+const { verifyPassword } = require("../src/services/passwords");
 
 test("full seed covers all geography and 147840 coherent quarter-hour readings", () => {
   const sites = createSites();
@@ -89,13 +91,13 @@ test("reading batches insert only missing samples and preserve existing IDs and 
   assert.equal(JSON.stringify(stored), beforeMissingParent);
 });
 
-test("full hierarchy reruns reuse IDs and parents without resetting inactive status or credentials", async t => {
+test("new seeded installations use prefix passwords by default and reruns never rotate hashes", async t => {
   const province = { publicId: randomUUID(), name: "Western" };
   const district = { publicId: randomUUID(), name: "Colombo", provinceId: province.publicId };
   const substation = { publicId: randomUUID(), name: "Colombo Grid Substation", districtId: district.publicId };
   const site = createSites()[0];
   site.installations = site.installations.slice(0, 1);
-  const installation = { publicId: randomUUID(), meterId: site.installations[0].meterId, substationId: substation.publicId, status: "inactive", deviceCredentialHash: "rotated-private-hash" };
+  let stored;
   t.mock.method(mongoose.connection, "transaction", callback => callback(null));
   for (const [name, record] of [["Province", province], ["District", district], ["GridSubstation", substation]]) {
     t.mock.method(models[name], "find", filter => ({ session: () => ({ limit: async () => {
@@ -103,10 +105,34 @@ test("full hierarchy reruns reuse IDs and parents without resetting inactive sta
       return [record];
     } }) }));
   }
-  t.mock.method(models.SolarInstallation, "findOne", () => ({ session: async () => installation }));
-  const snapshot = JSON.stringify({ province, district, substation, installation });
-  assert.deepEqual(await seedHierarchy([site]), [{ publicId: installation.publicId, profileIndex: 0 }]);
-  assert.equal(JSON.stringify({ province, district, substation, installation }), snapshot);
-  installation.substationId = randomUUID();
-  await assert.rejects(seedHierarchy([site]), /conflicting parent/);
+  t.mock.method(models.SolarInstallation, "findOne", () => ({ session: async () => stored || null }));
+  t.mock.method(models.SolarInstallation.prototype, "save", async function () {
+    stored = this.toObject();
+    return this;
+  });
+  const env = { DEVICE_HASH_COMMON_PREFIX: " test-development- " };
+  const result = await seedHierarchy([site], () => {}, env);
+  assert.deepEqual(result, [{ publicId: stored.publicId, profileIndex: site.installations[0].profileIndex }]);
+  assert.equal(stored.substationId, substation.publicId);
+  assert.equal(await verifyPassword(" test-development- " + site.installations[0].meterId, stored.deviceCredentialHash), true);
+  assert.equal(await verifyPassword(" test-development- OTHER-METER", stored.deviceCredentialHash), false);
+  stored.status = "inactive";
+  stored.deviceCredentialHash = "independently-rotated-hash";
+  const snapshot = JSON.stringify({ province, district, substation, stored });
+  assert.deepEqual(await seedHierarchy([site], () => {}, { DEVICE_HASH_COMMON_PREFIX: "changed-prefix-" }), result);
+  assert.equal(JSON.stringify({ province, district, substation, stored }), snapshot);
+  stored.substationId = randomUUID();
+  await assert.rejects(seedHierarchy([site], () => {}, env), /conflicting parent/);
+  for (const prefix of [undefined, "", " "]) {
+    await assert.rejects(seedHierarchy([site], () => {}, { DEVICE_HASH_COMMON_PREFIX: prefix }), /DEVICE_HASH_COMMON_PREFIX/);
+  }
+});
+
+test("seed CLI reports missing device prefix before connecting or writing", () => {
+  const result = spawnSync(process.execPath, ["scripts/seed.js"], {
+    env: { ...process.env, DEVICE_HASH_COMMON_PREFIX: "" }, encoding: "utf8", timeout: 10000,
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Set DEVICE_HASH_COMMON_PREFIX in .env/);
+  assert.equal(result.stdout.includes("Connecting to MongoDB"), false);
 });

@@ -54,6 +54,8 @@ Hierarchy writes use per-district transactions. Readings use one batch of 672 in
 
 The seed is setup tooling and may restore missing fixture history for an inactive installation. Device ingestion must still reject inactive installations.
 
+New development installations derive their password from `DEVICE_HASH_COMMON_PREFIX` plus the exact meter ID. Store only its salted scrypt hash in `deviceCredentialHash`; no random disposable-secret fallback or per-installation override is used. Prefix configuration is required before dataset seed writes. This is a development convenience, not the production provisioning scheme: real devices require independent credentials. Normal reruns preserve existing hashes and statuses; credential replacement is an explicit setup operation, never an automatic rerun or an admin API permission.
+
 `scripts/seed-data.js` generates the geography and profiles; `scripts/seed.js` handles persistence. `test/seed.test.js` checks generation and rerun preservation offline. See the [README](../README.md#sample-data) for commands, credential configuration, and historical verification evidence.
 
 The former two-installation demo is preserved separately in `seed_fixture_archive`, including copies of the shared Western/Colombo parents reused in the live hierarchy. The current seed leaves the archive untouched. Completed migration tools and the one-off verifier were removed; their history remains in the [prompt log](prompt-log.md).

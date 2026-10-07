@@ -77,6 +77,12 @@ This file records choices, their reasons, and unresolved questions. Concrete sch
 - **Reason:** A valid signature does not establish that the User still exists or retains the token's role/jurisdiction. Scoped database filters and counts prevent leakage; principal-specific private validators prevent stale or foreign cache validators bypassing current access.
 - **Surface:** Implement only GET /provinces for this step. Province and district analysts see their authorized parent province; geographic filters can narrow access but cannot expand it. See architecture and HTTP rules for details.
 
+## D14 - Development device credential derivation
+
+- **Choice:** For development only, derive each installation password from the private `.env` common prefix followed by its exact meter ID. Use the same salted scrypt format and verification helper as user passwords. Replace the earlier unknown installation hashes through an explicitly authorized one-time setup update.
+- **Reason:** This avoids managing 220 separate development secrets while retaining normal password verification against stored hashes. Prefix compromise exposes all derived device passwords, so production devices must have independent credentials.
+- **Reruns:** New installations use this derivation by default. Existing hashes, statuses, IDs, ancestry, and readings remain unchanged on normal seed reruns; prefix changes require explicit credential replacement. No credential-rotation API or device-token endpoint is introduced. Completed live-update evidence belongs in the prompt log.
+
 ## Pending decisions
 
 | Topic | Decision needed |

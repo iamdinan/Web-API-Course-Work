@@ -27,6 +27,7 @@ Requires Node.js 24 or later and access to MongoDB.
 | `JWT_ISSUER` | Token issuer (`iss`) | Required; example: `solar-generation-api` |
 | `JWT_AUDIENCE` | Token audience (`aud`) | Required; example: `solar-generation-users` |
 | `JWT_EXPIRES_IN_SECONDS` | Token lifetime, 60 to 3600 seconds | `900` |
+| `DEVICE_HASH_COMMON_PREFIX` | Development installation password prefix; required for dataset seeding | Set locally; no default |
 
 Existing process environment variables override `.env`. Keep credentials out of source control. Local development uses HTTP; production HTTPS is intended to terminate at the deployment proxy.
 
@@ -61,7 +62,7 @@ The seed creates 9 provinces, 25 districts, 25 synthetic substations, 220 instal
 
 Run `npm run seed` after configuring `MONGODB_URI`. The database must support transactions, as Atlas does. The command builds declared indexes, inserts missing data, prints collection totals (including unrelated records), and disconnects. It never clears the database.
 
-Optional local `SEED_DEVICE_SECRET_1` through `SEED_DEVICE_SECRET_220` values provide device secrets for new installations. Without them, random disposable secrets are used and their plaintext is not retained or printed. Secrets are salted and scrypt-hashed; changing these variables does not rotate existing credentials. Keep plaintext secrets out of source control.
+For development, set `DEVICE_HASH_COMMON_PREFIX` in the ignored `.env`. A new installation's password is the exact prefix followed by its stored meter ID; the seed stores only a fresh salted scrypt hash. This replaces the old per-installation secret variables and disposable-secret fallback. Reruns preserve existing credentials, so changing the prefix does not rotate stored hashes. Production devices must use independent credentials.
 
 See the [architecture seed section](docs/architecture.md#seed-dataset-and-persistence) for profiles, dates, persistence, and rerun guarantees. The saved [seed verification report](docs/seed-verification.json) records a previous Atlas rerun with zero inserted readings and unchanged document hashes/counts. It is historical evidence, not a current check or one that runs automatically with the seed.
 
