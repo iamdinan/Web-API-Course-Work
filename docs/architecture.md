@@ -102,4 +102,4 @@ Use shared counters with atomic updates and expiry across deployed instances. Re
 
 See `API_DESIGN_RULES.md` for the HTTP response contract and `decisions.md` for pending choices.
 
-The initial implementation provides `/health` and `/openapi.json`; `docs/openapi.json` describes implemented routes only. The configured `API_BASE_URL` defaults to `/api/v1.0` and is imported at the API router mount. Other resource routes, Swagger UI, database readiness, and shared rate limits remain planned.
+The initial implementation provides `/health` and `/openapi.json`; `docs/openapi.json` describes implemented routes only. The configured `API_BASE_URL` defaults to `/api/v1.0` and is imported at the API router mount. Startup now awaits a Mongoose connection using `MONGODB_URI` before opening the HTTP listener; initial failure prevents startup. SIGINT/SIGTERM close HTTP and database connections. Health remains a liveness check, without a database query. Other resource routes, Swagger UI, a database readiness endpoint, and shared rate limits remain planned.

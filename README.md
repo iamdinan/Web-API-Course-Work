@@ -8,6 +8,18 @@ variables override `.env`. `API_BASE_URL=/api/v1.0` is the shared API path prefi
 `PORT=3000` controls the local HTTP listener. Production HTTPS terminates at the
 deployment proxy.
 
+Set `MONGODB_URI` in `.env` to your MongoDB Atlas connection string, including
+the intended database name. Startup connects through Mongoose before opening
+the HTTP listener. The terminal prints `Connecting to MongoDB...`, then
+`MongoDB connected` and the endpoint URLs on success. If configuration or
+connection fails, the API does not start and exits with a failure status.
+Stopping with Ctrl+C closes the HTTP server and database connection. Database
+credentials and connection strings are not printed in connection errors.
+
+For a manual connection check, run `npm run dev` and watch for `MongoDB connected`,
+then request the health URL below. No collections or seed records are created
+by the connection module. The actual Atlas connection has not been verified here.
+
 `GET http://localhost:3000/api/v1.0/health` returns `200` with `{"status":"ok"}`.
 This public liveness check does not query MongoDB. It returns a stable strong
 ETag; a matching `If-None-Match` returns bodyless `304`. An Accept header that

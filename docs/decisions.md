@@ -48,7 +48,13 @@
 - **Health:** Public GET `/health` returns 200 `{ "status": "ok" }` for application liveness only, with a stable strong ETag and `Cache-Control: no-cache`. Matching `If-None-Match` returns bodyless 304; Accept excluding JSON returns bodyless 406. Database readiness is deferred until persistence is connected.
 - **Structure:** Separate configuration, application setup, listener startup, routes, controllers, and shared middleware. Add services and models when the feature needs business logic or persistence.
 
-## Pending decisions
+## D09 — MongoDB connection lifecycle
+
+- **Choice:** Use the installed Mongoose dependency with `MONGODB_URI` imported from central configuration. `src/config/database.js` owns connection and disconnection. Server startup waits for the connection and fails without opening the HTTP listener if connection fails; shutdown closes HTTP and MongoDB connections.
+- **Security:** Connection failures use generic diagnostic messages without printing the URI or raw driver errors. Keep credentials in the ignored `.env`; the example uses a credential-free local URI.
+- **Verification:** Syntax and module loading only; the user will manually verify the real database connection. No database writes or changes to the public health contract.
+
+## Unresolved issues
 
 | Topic | Decision needed |
 | --- | --- |
