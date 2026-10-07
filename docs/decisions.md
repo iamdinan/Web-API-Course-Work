@@ -39,7 +39,7 @@ This file records choices, their reasons, and unresolved questions. Concrete sch
 - **Integrity:** Coordinate ingestion and deletion through a shared transactional installation write or an equivalent guarantee. Snapshot checks alone cannot prevent orphaned readings. Replacements receive new public IDs so old installation tokens cannot address them.
 - **Conditional writes:** Optional strong `If-Match` protects against stale admin changes while retaining unconditional clients. Compare against the same public detail representation used by GET and PATCH; internal lock fields must not change its ETag. Request ordering and status rules belong to the [HTTP contract](API_DESIGN_RULES.md#caching-and-access); persistence guarantees belong to the [architecture](architecture.md#admin-installation-management).
 - **Provisioning:** Use controlled account setup and current stored roles, with no public registration or committed passwords.
-- **Status:** Inactive-installation token rejection is implemented; lifecycle writes and ingestion remain planned. Its implementation must include the agent verification requirements in [AGENTS.md](../AGENTS.md).
+- **Status:** Inactive-installation token issuance and verification rejection are implemented; lifecycle writes and ingestion remain planned. Its implementation must include the agent verification requirements in [AGENTS.md](../AGENTS.md).
 
 ## D08 — Environment configuration and health
 
@@ -87,7 +87,14 @@ This file records choices, their reasons, and unresolved questions. Concrete sch
 
 - **Choice:** Verify submitted meter credentials against the stored scrypt hash, then allow token issuance only for active installations. Reuse user-token HS256 configuration and response shape, with installation-only claims and separate shared IP/meter login counters.
 - **Reason:** Stored-hash verification supports both development-derived and independent production secrets. Credential verification before status prevents disclosing inactive installations to clients without valid secrets. Actor separation keeps installation tokens out of user reads.
-- **Scope:** Token issuance only; device JWT verification, ingestion, and credential rotation remain outside this implementation. See the architecture and HTTP contract for behavior.
+- **Scope:** This chunk covered token issuance only; installation verification is covered by D16. Ingestion and credential rotation remain planned. See the architecture and HTTP contract for behavior.
+
+## D16 - Current-installation verification and ownership
+
+- **Choice:** Reuse cryptographic bearer checks, require the installation actor and exact write scope, reload installation state by its public UUID, and attach only the authenticated public ID. Apply a separate URL ownership check after authentication.
+- **Reason:** Unexpired tokens must lose access when the installation is deleted or inactive; token claims cannot override current stored state or permit another installation's writes. Keep user and installation principal lookups separate.
+- **Errors:** Wrong actors return 401 in both middleware types, following the user's clarification. Valid installation actors with insufficient scope, inactive status, or mismatched URL ownership return 403. Missing principals remain 401; database failures remain sanitized 500s.
+- **Scope:** Middleware only, without a public test route or reading submission. Future ingestion still requires atomic persistence-time status and deletion safeguards.
 
 ## Pending decisions
 

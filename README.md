@@ -6,7 +6,7 @@ A Node.js/Express API backed by Mongoose and MongoDB Atlas for solar generation 
 
 ## Current implementation
 
-The application currently provides public `/health` and `/openapi.json`, user/admin login at `POST /auth/user-tokens`, device login at `POST /auth/device-tokens`, protected `GET /provinces`, six data models, the full dataset seed, and controlled user seeding. Login and protected reads use shared MongoDB limits. Device JWT verification, reading submission, remaining resource endpoints, Swagger UI, database readiness, and other traffic limits remain planned. The architecture describes the target API; OpenAPI describes implemented routes only.
+The application currently provides public `/health` and `/openapi.json`, user/admin login at `POST /auth/user-tokens`, device login at `POST /auth/device-tokens`, protected `GET /provinces`, six data models, the full dataset seed, and controlled user seeding. Login and protected reads use shared MongoDB limits. Installation JWT verification and URL ownership middleware are available for future device routes. Reading submission, remaining resource endpoints, Swagger UI, database readiness, and other traffic limits remain planned. The architecture describes the target API; OpenAPI describes implemented routes only.
 
 ## Getting started
 
@@ -39,7 +39,7 @@ Startup connects to MongoDB before opening the HTTP listener. Watch for `MongoDB
 | --- | --- |
 | `npm run dev` | Start with automatic restart on source changes |
 | `npm start` | Start without watch mode |
-| `npm test` | Run offline health/configuration, model, seed, and user-login tests |
+| `npm test` | Run offline authentication, protected province access, health/configuration, model, and seed tests |
 | `npm run seed` | Insert the full sample dataset into the configured database |
 | `npm run seed:users` | Insert and verify the 36 configured accounts without changing existing users |
 
@@ -100,7 +100,7 @@ Login responses use `Cache-Control: no-store`. Shared counters allow 5 attempts 
 
 POST JSON containing only `meterId` and `deviceSecret` to `/api/v1.0/auth/device-tokens`. Submit the original secret; for the development seed it is the configured prefix followed by the meter ID. Login verifies the submitted value against the stored hash and returns the same token response fields as user login. It uses the existing JWT environment configuration; no additional variables are needed.
 
-Unknown meters and incorrect secrets return the same 401; correct credentials for inactive installations return 403. Shared device-login counters allow 5 attempts per 15 minutes per IP and meter ID, independently of user-login counters. Responses use `Cache-Control: no-store`. Installation tokens cannot access user reads such as `/provinces`. Device JWT verification and reading submission remain planned. See the [HTTP contract](docs/API_DESIGN_RULES.md#device-token-exchange) and [OpenAPI](docs/openapi.json).
+Unknown meters and incorrect secrets return the same 401; correct credentials for inactive installations return 403. Shared device-login counters allow 5 attempts per 15 minutes per IP and meter ID, independently of user-login counters. Responses use `Cache-Control: no-store`. Installation tokens cannot access user reads such as `/provinces`. Installation JWT verification and URL ownership checks are implemented as middleware; reading submission remains planned. No device write route is exposed yet. See the [verification contract](docs/API_DESIGN_RULES.md#installation-jwt-verification-and-ownership). See the [HTTP contract](docs/API_DESIGN_RULES.md#device-token-exchange) and [OpenAPI](docs/openapi.json).
 
 ## Protected province list
 

@@ -3,7 +3,7 @@
   "info": {
     "title": "Solar Generation API",
     "version": "1.0.0",
-    "description": "Implemented endpoints: application liveness, OpenAPI, user/admin JWT exchange, and jurisdiction-scoped province lists."
+    "description": "Implemented endpoints: application liveness, OpenAPI, user/admin and device JWT exchange, and jurisdiction-scoped province lists."
   },
   "servers": [
     {
@@ -401,7 +401,7 @@
         "operationId": "createDeviceToken",
         "summary": "Exchange meter credentials for a short-lived installation JWT",
         "security": [],
-        "description": "Accept only nonempty meterId and deviceSecret strings, preserving both exactly. Verify the submitted secret against the stored salted scrypt hash; never derive a secret from the development prefix. Unknown meters and secret mismatches share a generic 401. Correct credentials for inactive installations return 403. Active installations receive sub (installation public UUID), actor=installation and scope=installation-write with the same configured HS256, iss, aud and lifetime as user tokens. No user authorization or internal IDs are included. All responses use no-store. Validly shaped attempts use shared MongoDB counters: 5 per 15 minutes per IP and exact meter ID, separate from user-login counters. Device verification middleware and reading submission are not implemented.",
+        "description": "Accept only nonempty meterId and deviceSecret strings, preserving both exactly. Verify the submitted secret against the stored salted scrypt hash; never derive a secret from the development prefix. Unknown meters and secret mismatches share a generic 401. Correct credentials for inactive installations return 403. Active installations receive sub (installation public UUID), actor=installation and scope=installation-write with the same configured HS256, iss, aud and lifetime as user tokens. No user authorization or internal IDs are included. All responses use no-store. Validly shaped attempts use shared MongoDB counters: 5 per 15 minutes per IP and exact meter ID, separate from user-login counters. Reading submission is not implemented.",
         "requestBody": {
           "required": true,
           "content": {

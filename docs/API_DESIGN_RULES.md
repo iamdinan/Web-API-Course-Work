@@ -48,6 +48,14 @@ Unknown meters and secret mismatches return identical 401 `INVALID_CREDENTIALS` 
 
 After validation and before credential lookup, apply shared MongoDB counters of 5 attempts per 15 minutes per IP and exact meter ID, using separate namespaces from user login. Excess attempts use the existing 429 login error and integer `Retry-After`. Invalid request shapes do not consume credential-attempt counters. The installation JWT claims and current implementation scope are defined in the [architecture](architecture.md#device-token-implementation).
 
+## Installation JWT verification and ownership
+
+Installation-only middleware reads `Authorization: Bearer <token>` and verifies the configured signature/algorithm, issuer, audience, expiry, public UUID subject, and bounded issued/expiry claims. Missing, malformed, invalid, expired, or wrong-actor tokens return 401 `UNAUTHORIZED` with `WWW-Authenticate: Bearer` and message `A valid installation bearer token is required.` A deleted installation or invalid stored principal also returns this same 401. Wrong-actor tokens use 401 in both user and installation authentication.
+
+A valid installation actor without exactly `scope=installation-write` returns 403 `FORBIDDEN` with message `The token does not permit installation writes.` Current inactive installations return 403 `INSTALLATION_INACTIVE` with message `Inactive installations cannot authenticate for writes.` URL ownership mismatches return 403 `FORBIDDEN` with message `The authenticated installation cannot access this installation.` Ownership checks without authenticated installation context return the installation 401 above. All errors use the standard JSON shape; persistence failures remain sanitized 500s.
+
+These are reusable middleware contracts; no new public route is introduced. Token issuance keeps its existing credential/status responses. Reading submission and ingestion rate limits remain planned.
+
 ## Protected province list
 
 `GET /provinces` requires a user bearer JWT. Missing/malformed/invalid/expired tokens, non-user actors, removed users, or invalid stored role/scope assignments return 401 `UNAUTHORIZED` with `WWW-Authenticate: Bearer`. Use one generic message, `A valid user bearer token is required.`; do not disclose token-validation details. Persistence failures remain sanitized 500s.

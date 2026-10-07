@@ -154,7 +154,15 @@ Login and user-read counters live in the operational `token_rate_limits` collect
 
 Active installations receive only `sub` (installation public UUID), `actor=installation`, and `scope=installation-write`, plus standard `iss`, `aud`, `iat`, and `exp`. User and device issuance share the signing utility and existing HS256 environment configuration. Device issuance uses the same operational counter collection and atomic expiry rules, with separate hashed device-IP and meter-ID keys. HTTP errors and limits belong to the [device exchange contract](API_DESIGN_RULES.md#device-token-exchange).
 
-The existing user JWT middleware rejects installation actors before User lookup; these tokens cannot read `/provinces`. Device JWT verification middleware and reading submission remain unimplemented. Future ingestion must verify current installation existence, active status, and ownership as required by the security rules above.
+The existing user JWT middleware rejects installation actors before User lookup; these tokens cannot read `/provinces`. Installation verification and ownership middleware are implemented below. Reading submission remains unimplemented; future ingestion must also enforce installation state and deletion coordination atomically at persistence time.
+
+### Verified installations and ownership
+
+`verifyInstallationJwt` uses the shared bearer verifier for configured HS256 signature, issuer, audience, expiry, a public UUID subject, and bounded integer `iat`/`exp`. Require `actor=installation` and exactly `scope=installation-write` before querying MongoDB. Look up SolarInstallation by `publicId=sub`, explicitly selecting only `publicId` and `status`; reject absent/invalid stored installations and current inactive status. Never trust token claims for installation status, meter binding, or user privileges. Database failures propagate through the sanitized error handler.
+
+Attach only a frozen `{ id: installation.publicId }` as `req.installation`. `requireInstallationOwnership` must follow verification and requires `req.params.installationId` to match this authenticated public UUID exactly; user/admin context cannot substitute for installation authentication. Both actor types reuse cryptographic checks while retaining separate current-principal lookup and authorization behavior. See the [HTTP contract](API_DESIGN_RULES.md#installation-jwt-verification-and-ownership) for 401/403 conventions.
+
+These middleware modules are ready for future installation-bound routes and are not mounted on a public test endpoint. Reading submission and its persistence-time active-status/deletion safeguards remain planned; verification alone does not solve concurrent deactivation or deletion during a write.
 
 ### Verified users and province access
 
