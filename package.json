@@ -12,10 +12,11 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "node --test"
+    "test": "node --test",
+    "seed": "node scripts/seed.js",
+    "seed:users": "node scripts/seed-users.js"
   },
   "dependencies": {
-    "dotenv": "^18.0.6",
     "express": "^5.2.1",
     "mongoose": "^9.11.0"
   }
