@@ -6,7 +6,7 @@ A Node.js/Express API backed by Mongoose and MongoDB Atlas for solar generation 
 
 ## Current implementation
 
-The application currently provides public `/health` and `/openapi.json`, user/admin login at `POST /auth/user-tokens`, protected `GET /provinces`, six data models, the full dataset seed, and controlled user seeding. Login and protected reads use shared MongoDB limits. Device authentication, remaining resource endpoints, Swagger UI, database readiness, and other traffic limits remain planned. The architecture describes the target API; OpenAPI describes implemented routes only.
+The application currently provides public `/health` and `/openapi.json`, user/admin login at `POST /auth/user-tokens`, device login at `POST /auth/device-tokens`, protected `GET /provinces`, six data models, the full dataset seed, and controlled user seeding. Login and protected reads use shared MongoDB limits. Device JWT verification, reading submission, remaining resource endpoints, Swagger UI, database readiness, and other traffic limits remain planned. The architecture describes the target API; OpenAPI describes implemented routes only.
 
 ## Getting started
 
@@ -52,6 +52,7 @@ With the default configuration:
 | `http://localhost:3000/api/v1.0/health` | Application liveness; returns `{"status":"ok"}` |
 | `http://localhost:3000/api/v1.0/openapi.json` | Implemented OpenAPI specification |
 | `http://localhost:3000/api/v1.0/auth/user-tokens` | POST email/password to obtain a user/admin access token |
+| `http://localhost:3000/api/v1.0/auth/device-tokens` | POST meterId/deviceSecret to obtain an installation access token |
 | `http://localhost:3000/api/v1.0/provinces` | GET visible provinces using `Authorization: Bearer <access_token>` |
 
 Health does not query MongoDB. For a manual startup check, confirm the connection message and request the health URL. See the [HTTP contract](docs/API_DESIGN_RULES.md) for response and conditional-request behavior.
@@ -93,7 +94,13 @@ The command verifies all configured accounts before committing its transaction a
 
 POST JSON containing only `email` and `password` to `/api/v1.0/auth/user-tokens`. A successful login returns `access_token`, `token_type=Bearer`, and `expires_in` in seconds. User ID, role, read scope, and regional assignment come from MongoDB. Unknown emails and incorrect passwords share the same 401 error.
 
-Login responses use `Cache-Control: no-store`. Shared counters allow 5 attempts per 15 minutes per IP and normalized email; excess attempts return 429 with `Retry-After`. This endpoint issues access tokens only; device login and remaining resource routes remain planned. See the [HTTP contract](docs/API_DESIGN_RULES.md#user-token-exchange) and [OpenAPI](docs/openapi.json) for request/error details.
+Login responses use `Cache-Control: no-store`. Shared counters allow 5 attempts per 15 minutes per IP and normalized email; excess attempts return 429 with `Retry-After`. This endpoint issues access tokens only; remaining resource routes remain planned. See the [HTTP contract](docs/API_DESIGN_RULES.md#user-token-exchange) and [OpenAPI](docs/openapi.json) for request/error details.
+
+## Device login
+
+POST JSON containing only `meterId` and `deviceSecret` to `/api/v1.0/auth/device-tokens`. Submit the original secret; for the development seed it is the configured prefix followed by the meter ID. Login verifies the submitted value against the stored hash and returns the same token response fields as user login. It uses the existing JWT environment configuration; no additional variables are needed.
+
+Unknown meters and incorrect secrets return the same 401; correct credentials for inactive installations return 403. Shared device-login counters allow 5 attempts per 15 minutes per IP and meter ID, independently of user-login counters. Responses use `Cache-Control: no-store`. Installation tokens cannot access user reads such as `/provinces`. Device JWT verification and reading submission remain planned. See the [HTTP contract](docs/API_DESIGN_RULES.md#device-token-exchange) and [OpenAPI](docs/openapi.json).
 
 ## Protected province list
 

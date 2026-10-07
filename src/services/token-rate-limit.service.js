@@ -37,4 +37,10 @@ async function checkUserReadLimit(userId) {
   return consume("user-read", userId, 120, 60 * 1000);
 }
 
-module.exports = { checkUserTokenLimit, checkUserReadLimit, Counter };
+async function checkDeviceTokenLimit(ip, meterId) {
+  const retryAfter = await consume("device-token-ip", ip);
+  if (retryAfter) return retryAfter;
+  return consume("device-token-meter", meterId);
+}
+
+module.exports = { checkUserTokenLimit, checkDeviceTokenLimit, checkUserReadLimit, Counter };

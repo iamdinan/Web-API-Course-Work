@@ -155,7 +155,7 @@ test("OpenAPI exposes only the implemented user-token exchange with request/erro
   assert.deepEqual(operation.requestBody.content["application/json"].schema.required, ["email", "password"]);
   assert.equal(operation.requestBody.content["application/json"].schema.additionalProperties, false);
   for (const status of ["200", "400", "401", "406", "413", "415", "429", "500"]) assert.ok(operation.responses[status]);
-  assert.equal(spec.paths["/auth/device-tokens"], undefined);
+  assert.ok(spec.paths["/auth/device-tokens"].post);
 });
 
 test("JWT configuration rejects missing/weak keys, missing issuer/audience, and invalid lifetimes", () => {

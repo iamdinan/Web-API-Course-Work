@@ -146,7 +146,15 @@ The implemented user-token exchange reads the normalized email from MongoDB with
 
 HS256 tokens use `sub` for the User public UUID, `actor=user`, `role`, `readScope`, and only the applicable `provinceId` or `districtId`. Admin tokens also include `permissions=[installation-create, installation-deactivate, installation-delete]`. Claims are selected from stored fields; request bodies cannot supply identity or authorization. Include configured `iss`/`aud` and standard `iat`/`exp`. Signing key, issuer, audience, and expiry are configured as described in the [README](../README.md#getting-started). The verified-user middleware and protected province list below apply the current-principal security checks; future protected routes must use the same checks rather than trust claims alone.
 
-Login and user-read counters live in the operational `token_rate_limits` collection, outside the six public domain models. Hashed IP/email keys use unique `_id` values; atomic update pipelines reset expired windows or increment the current count, and a TTL index eventually removes expired counters. Retry a concurrent initial-upsert collision against the winning key. Database failures fail closed with the standard error. Token issuance consumes no User writes and does not change credentials or assignments.
+Login and user-read counters live in the operational `token_rate_limits` collection, outside the six public domain models. Hashed IP/email/meter keys use unique `_id` values; atomic update pipelines reset expired windows or increment the current count, and a TTL index eventually removes expired counters. Retry a concurrent initial-upsert collision against the winning key. Database failures fail closed with the standard error. Token issuance consumes no User writes and does not change credentials or assignments.
+
+### Device-token implementation
+
+`POST /auth/device-tokens` looks up SolarInstallation by the exact submitted meter ID, explicitly selects the internal `deviceCredentialHash`, and uses the shared scrypt verification helper, including dummy derivation for absent installations or invalid hash formats. The endpoint never reads the development prefix, reconstructs secrets, writes installation fields, or changes seeded credentials. Check credentials before status; inactive installations cannot receive tokens.
+
+Active installations receive only `sub` (installation public UUID), `actor=installation`, and `scope=installation-write`, plus standard `iss`, `aud`, `iat`, and `exp`. User and device issuance share the signing utility and existing HS256 environment configuration. Device issuance uses the same operational counter collection and atomic expiry rules, with separate hashed device-IP and meter-ID keys. HTTP errors and limits belong to the [device exchange contract](API_DESIGN_RULES.md#device-token-exchange).
+
+The existing user JWT middleware rejects installation actors before User lookup; these tokens cannot read `/provinces`. Device JWT verification middleware and reading submission remain unimplemented. Future ingestion must verify current installation existence, active status, and ownership as required by the security rules above.
 
 ### Verified users and province access
 

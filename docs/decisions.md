@@ -39,7 +39,7 @@ This file records choices, their reasons, and unresolved questions. Concrete sch
 - **Integrity:** Coordinate ingestion and deletion through a shared transactional installation write or an equivalent guarantee. Snapshot checks alone cannot prevent orphaned readings. Replacements receive new public IDs so old installation tokens cannot address them.
 - **Conditional writes:** Optional strong `If-Match` protects against stale admin changes while retaining unconditional clients. Compare against the same public detail representation used by GET and PATCH; internal lock fields must not change its ETag. Request ordering and status rules belong to the [HTTP contract](API_DESIGN_RULES.md#caching-and-access); persistence guarantees belong to the [architecture](architecture.md#admin-installation-management).
 - **Provisioning:** Use controlled account setup and current stored roles, with no public registration or committed passwords.
-- **Status:** This lifecycle is designed but not yet implemented. Its implementation must include the agent verification requirements in [AGENTS.md](../AGENTS.md).
+- **Status:** Inactive-installation token rejection is implemented; lifecycle writes and ingestion remain planned. Its implementation must include the agent verification requirements in [AGENTS.md](../AGENTS.md).
 
 ## D08 — Environment configuration and health
 
@@ -81,7 +81,13 @@ This file records choices, their reasons, and unresolved questions. Concrete sch
 
 - **Choice:** For development only, derive each installation password from the private `.env` common prefix followed by its exact meter ID. Use the same salted scrypt format and verification helper as user passwords. Replace the earlier unknown installation hashes through an explicitly authorized one-time setup update.
 - **Reason:** This avoids managing 220 separate development secrets while retaining normal password verification against stored hashes. Prefix compromise exposes all derived device passwords, so production devices must have independent credentials.
-- **Reruns:** New installations use this derivation by default. Existing hashes, statuses, IDs, ancestry, and readings remain unchanged on normal seed reruns; prefix changes require explicit credential replacement. No credential-rotation API or device-token endpoint is introduced. Completed live-update evidence belongs in the prompt log.
+- **Reruns:** New installations use this derivation by default. Existing hashes, statuses, IDs, ancestry, and readings remain unchanged on normal seed reruns; prefix changes require explicit credential replacement. This seed decision introduced no credential-rotation API; device token issuance is covered by D15. Completed live-update evidence belongs in the prompt log.
+
+## D15 - Device credential exchange
+
+- **Choice:** Verify submitted meter credentials against the stored scrypt hash, then allow token issuance only for active installations. Reuse user-token HS256 configuration and response shape, with installation-only claims and separate shared IP/meter login counters.
+- **Reason:** Stored-hash verification supports both development-derived and independent production secrets. Credential verification before status prevents disclosing inactive installations to clients without valid secrets. Actor separation keeps installation tokens out of user reads.
+- **Scope:** Token issuance only; device JWT verification, ingestion, and credential rotation remain outside this implementation. See the architecture and HTTP contract for behavior.
 
 ## Pending decisions
 
@@ -91,4 +97,4 @@ This file records choices, their reasons, and unresolved questions. Concrete sch
 | Measurement validation | Set meter clock-drift and measurement bounds. |
 | Energy counter resets | Finalize reset/baseline behavior for district energy calculations. |
 | Deployment | Choose the deployment provider and HTTPS configuration. |
-| Rate thresholds | Confirm or revise thresholds for remaining traffic classes; user-token issuance uses 5 attempts/15 minutes and protected user reads use 120/minute. |
+| Rate thresholds | Confirm or revise thresholds for remaining traffic classes; user/device token issuance uses 5 attempts/15 minutes and protected user reads use 120/minute. |

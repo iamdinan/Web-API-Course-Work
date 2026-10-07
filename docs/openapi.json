@@ -84,7 +84,7 @@
             }
           },
           "406": {
-            "description": "Accept excludes JSON; no body"
+            "$ref": "#/components/responses/NotAcceptable"
           }
         }
       }
@@ -109,7 +109,7 @@
             "description": "Unchanged specification; no body"
           },
           "406": {
-            "description": "Accept excludes JSON; no body"
+            "$ref": "#/components/responses/NotAcceptable"
           }
         }
       }
@@ -149,58 +149,13 @@
         },
         "responses": {
           "200": {
-            "description": "Credentials verified; signed access token",
-            "headers": {
-              "Cache-Control": {
-                "schema": {
-                  "type": "string",
-                  "enum": [
-                    "no-store"
-                  ]
-                }
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "required": [
-                    "access_token",
-                    "token_type",
-                    "expires_in"
-                  ],
-                  "additionalProperties": false,
-                  "properties": {
-                    "access_token": {
-                      "type": "string"
-                    },
-                    "token_type": {
-                      "type": "string",
-                      "enum": [
-                        "Bearer"
-                      ]
-                    },
-                    "expires_in": {
-                      "type": "integer",
-                      "minimum": 60,
-                      "maximum": 3600,
-                      "description": "Configured token lifetime in seconds; default 900."
-                    }
-                  }
-                }
-              }
-            }
+            "$ref": "#/components/responses/TokenIssued"
           },
           "400": {
             "description": "Malformed JSON or invalid request fields.",
             "headers": {
               "Cache-Control": {
-                "schema": {
-                  "type": "string",
-                  "enum": [
-                    "no-store"
-                  ]
-                }
+                "$ref": "#/components/headers/NoStore"
               }
             },
             "content": {
@@ -231,20 +186,10 @@
             "description": "Invalid email or password.",
             "headers": {
               "Cache-Control": {
-                "schema": {
-                  "type": "string",
-                  "enum": [
-                    "no-store"
-                  ]
-                }
+                "$ref": "#/components/headers/NoStore"
               },
               "WWW-Authenticate": {
-                "schema": {
-                  "type": "string",
-                  "enum": [
-                    "Bearer"
-                  ]
-                }
+                "$ref": "#/components/headers/BearerChallenge"
               }
             },
             "content": {
@@ -261,124 +206,19 @@
             }
           },
           "406": {
-            "description": "Accept excludes JSON; no body",
-            "headers": {
-              "Cache-Control": {
-                "schema": {
-                  "type": "string",
-                  "enum": [
-                    "no-store"
-                  ]
-                }
-              }
-            }
+            "$ref": "#/components/responses/TokenNotAcceptable"
           },
           "413": {
-            "description": "Request body is too large.",
-            "headers": {
-              "Cache-Control": {
-                "schema": {
-                  "type": "string",
-                  "enum": [
-                    "no-store"
-                  ]
-                }
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                },
-                "example": {
-                  "code": "PAYLOAD_TOO_LARGE",
-                  "message": "Request body is too large.",
-                  "details": []
-                }
-              }
-            }
+            "$ref": "#/components/responses/TokenPayloadTooLarge"
           },
           "415": {
-            "description": "Request body must use application/json.",
-            "headers": {
-              "Cache-Control": {
-                "schema": {
-                  "type": "string",
-                  "enum": [
-                    "no-store"
-                  ]
-                }
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                },
-                "example": {
-                  "code": "UNSUPPORTED_MEDIA_TYPE",
-                  "message": "Request body must use application/json.",
-                  "details": []
-                }
-              }
-            }
+            "$ref": "#/components/responses/TokenUnsupportedMediaType"
           },
           "429": {
-            "description": "Too many login attempts. Try again later.",
-            "headers": {
-              "Cache-Control": {
-                "schema": {
-                  "type": "string",
-                  "enum": [
-                    "no-store"
-                  ]
-                }
-              },
-              "Retry-After": {
-                "schema": {
-                  "type": "integer",
-                  "minimum": 1
-                },
-                "description": "Seconds until the exceeded counter window expires."
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                },
-                "example": {
-                  "code": "RATE_LIMIT_EXCEEDED",
-                  "message": "Too many login attempts. Try again later.",
-                  "details": []
-                }
-              }
-            }
+            "$ref": "#/components/responses/TokenRateLimited"
           },
           "500": {
-            "description": "An unexpected error occurred.",
-            "headers": {
-              "Cache-Control": {
-                "schema": {
-                  "type": "string",
-                  "enum": [
-                    "no-store"
-                  ]
-                }
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                },
-                "example": {
-                  "code": "INTERNAL_SERVER_ERROR",
-                  "message": "An unexpected error occurred.",
-                  "details": []
-                }
-              }
-            }
+            "$ref": "#/components/responses/TokenServerError"
           }
         }
       }
@@ -450,18 +290,10 @@
             "description": "Scoped province list",
             "headers": {
               "Cache-Control": {
-                "schema": {
-                  "type": "string",
-                  "enum": [
-                    "private, no-cache"
-                  ]
-                }
+                "$ref": "#/components/headers/PrivateCacheControl"
               },
               "ETag": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "Strong validator of the exact scoped representation and current stored principal."
+                "$ref": "#/components/headers/ScopedETag"
               }
             },
             "content": {
@@ -476,18 +308,10 @@
             "description": "Current scoped representation unchanged; no body",
             "headers": {
               "Cache-Control": {
-                "schema": {
-                  "type": "string",
-                  "enum": [
-                    "private, no-cache"
-                  ]
-                }
+                "$ref": "#/components/headers/PrivateCacheControl"
               },
               "ETag": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "Strong validator of the exact scoped representation and current stored principal."
+                "$ref": "#/components/headers/ScopedETag"
               }
             }
           },
@@ -511,12 +335,7 @@
             "description": "A valid user bearer token is required.",
             "headers": {
               "WWW-Authenticate": {
-                "schema": {
-                  "type": "string",
-                  "enum": [
-                    "Bearer"
-                  ]
-                }
+                "$ref": "#/components/headers/BearerChallenge"
               }
             },
             "content": {
@@ -533,7 +352,7 @@
             }
           },
           "406": {
-            "description": "Accept excludes JSON; no body"
+            "$ref": "#/components/responses/NotAcceptable"
           },
           "429": {
             "description": "Too many read requests. Try again later.",
@@ -569,6 +388,136 @@
                 "example": {
                   "code": "INTERNAL_SERVER_ERROR",
                   "message": "An unexpected error occurred.",
+                  "details": []
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/device-tokens": {
+      "post": {
+        "operationId": "createDeviceToken",
+        "summary": "Exchange meter credentials for a short-lived installation JWT",
+        "security": [],
+        "description": "Accept only nonempty meterId and deviceSecret strings, preserving both exactly. Verify the submitted secret against the stored salted scrypt hash; never derive a secret from the development prefix. Unknown meters and secret mismatches share a generic 401. Correct credentials for inactive installations return 403. Active installations receive sub (installation public UUID), actor=installation and scope=installation-write with the same configured HS256, iss, aud and lifetime as user tokens. No user authorization or internal IDs are included. All responses use no-store. Validly shaped attempts use shared MongoDB counters: 5 per 15 minutes per IP and exact meter ID, separate from user-login counters. Device verification middleware and reading submission are not implemented.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "meterId",
+                  "deviceSecret"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "meterId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Exact stored meter identity; must contain a non-whitespace character."
+                  },
+                  "deviceSecret": {
+                    "type": "string",
+                    "minLength": 1,
+                    "writeOnly": true,
+                    "description": "Must contain a non-whitespace character; surrounding spaces are significant."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/TokenIssued"
+          },
+          "400": {
+            "description": "Malformed JSON or invalid request fields.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "fields": {
+                    "value": {
+                      "code": "INVALID_REQUEST",
+                      "message": "Provide only a nonempty meterId and deviceSecret.",
+                      "details": []
+                    }
+                  },
+                  "json": {
+                    "value": {
+                      "code": "INVALID_JSON",
+                      "message": "Request body must be valid JSON.",
+                      "details": []
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid meter ID or device secret.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "WWW-Authenticate": {
+                "$ref": "#/components/headers/BearerChallenge"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "INVALID_CREDENTIALS",
+                  "message": "Invalid meter ID or device secret.",
+                  "details": []
+                }
+              }
+            }
+          },
+          "406": {
+            "$ref": "#/components/responses/TokenNotAcceptable"
+          },
+          "413": {
+            "$ref": "#/components/responses/TokenPayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/TokenUnsupportedMediaType"
+          },
+          "429": {
+            "$ref": "#/components/responses/TokenRateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/TokenServerError"
+          },
+          "403": {
+            "description": "Credentials verified, but the installation is inactive.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "INSTALLATION_INACTIVE",
+                  "message": "Inactive installations cannot obtain device tokens.",
                   "details": []
                 }
               }
@@ -648,6 +597,32 @@
             }
           }
         }
+      },
+      "AccessToken": {
+        "type": "object",
+        "required": [
+          "access_token",
+          "token_type",
+          "expires_in"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "access_token": {
+            "type": "string"
+          },
+          "token_type": {
+            "type": "string",
+            "enum": [
+              "Bearer"
+            ]
+          },
+          "expires_in": {
+            "type": "integer",
+            "minimum": 60,
+            "maximum": 3600,
+            "description": "Configured token lifetime in seconds; default 900."
+          }
+        }
       }
     },
     "securitySchemes": {
@@ -656,6 +631,156 @@
         "scheme": "bearer",
         "bearerFormat": "JWT",
         "description": "HS256 user JWT from /auth/user-tokens. Each protected request reloads the current User role and jurisdiction."
+      }
+    },
+    "headers": {
+      "NoStore": {
+        "schema": {
+          "type": "string",
+          "enum": [
+            "no-store"
+          ]
+        }
+      },
+      "BearerChallenge": {
+        "schema": {
+          "type": "string",
+          "enum": [
+            "Bearer"
+          ]
+        }
+      },
+      "LoginRetryAfter": {
+        "schema": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "description": "Seconds until the exceeded counter window expires."
+      },
+      "PrivateCacheControl": {
+        "schema": {
+          "type": "string",
+          "enum": [
+            "private, no-cache"
+          ]
+        }
+      },
+      "ScopedETag": {
+        "schema": {
+          "type": "string"
+        },
+        "description": "Strong validator of the exact scoped representation and current stored principal."
+      }
+    },
+    "responses": {
+      "TokenIssued": {
+        "description": "Credentials verified; signed access token",
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/NoStore"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/AccessToken"
+            }
+          }
+        }
+      },
+      "TokenNotAcceptable": {
+        "description": "Accept excludes JSON; no body",
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/NoStore"
+          }
+        }
+      },
+      "TokenPayloadTooLarge": {
+        "description": "Request body is too large.",
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/NoStore"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "code": "PAYLOAD_TOO_LARGE",
+              "message": "Request body is too large.",
+              "details": []
+            }
+          }
+        }
+      },
+      "TokenUnsupportedMediaType": {
+        "description": "Request body must use application/json.",
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/NoStore"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "code": "UNSUPPORTED_MEDIA_TYPE",
+              "message": "Request body must use application/json.",
+              "details": []
+            }
+          }
+        }
+      },
+      "TokenRateLimited": {
+        "description": "Too many login attempts. Try again later.",
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/NoStore"
+          },
+          "Retry-After": {
+            "$ref": "#/components/headers/LoginRetryAfter"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "code": "RATE_LIMIT_EXCEEDED",
+              "message": "Too many login attempts. Try again later.",
+              "details": []
+            }
+          }
+        }
+      },
+      "TokenServerError": {
+        "description": "An unexpected error occurred.",
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/NoStore"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "code": "INTERNAL_SERVER_ERROR",
+              "message": "An unexpected error occurred.",
+              "details": []
+            }
+          }
+        }
+      },
+      "NotAcceptable": {
+        "description": "Accept excludes JSON; no body"
       }
     }
   }
