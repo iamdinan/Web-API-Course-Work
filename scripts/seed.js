@@ -1,15 +1,18 @@
 const mongoose = require("mongoose");
-const { randomBytes, scrypt, randomUUID } = require("node:crypto");
-const { promisify } = require("node:util");
+const { randomUUID } = require("node:crypto");
 const { connectDatabase, disconnectDatabase } = require("../src/config/database");
 const models = require("../src/models");
 const { createSites, generateReadings, EXPECTED, SAMPLES } = require("./seed-data");
-const scryptAsync = promisify(scrypt);
+const { hashPassword } = require("../src/services/passwords");
 
-async function credentialHash(secret) {
-  const salt = randomBytes(16).toString("hex");
-  const hash = await scryptAsync(secret || randomBytes(32).toString("hex"), salt, 64);
-  return `scrypt$${salt}$${hash.toString("hex")}`;
+class DeviceCredentialsError extends Error {}
+
+function devicePasswordPrefix(env = process.env) {
+  const prefix = env.DEVICE_HASH_COMMON_PREFIX;
+  if (typeof prefix !== "string" || !prefix.trim()) {
+    throw new DeviceCredentialsError("Set DEVICE_HASH_COMMON_PREFIX in .env before seeding development installations.");
+  }
+  return prefix;
 }
 
 async function insertIfMissing(Model, filter, fields, session) {
@@ -23,7 +26,8 @@ async function insertIfMissing(Model, filter, fields, session) {
   return document;
 }
 
-async function seedHierarchy(sites, onProgress = () => {}) {
+async function seedHierarchy(sites, onProgress = () => {}, env = process.env) {
+  const prefix = devicePasswordPrefix(env);
   const installations = [];
   for (const site of sites) {
     const siteInstallations = await mongoose.connection.transaction(async session => {
@@ -40,7 +44,7 @@ async function seedHierarchy(sites, onProgress = () => {}) {
         } else {
           installation = new models.SolarInstallation({
             meterId: profile.meterId, substationId: substation.publicId, status: "active",
-            deviceCredentialHash: await credentialHash(process.env[`SEED_DEVICE_SECRET_${profile.profileIndex + 1}`]),
+            deviceCredentialHash: await hashPassword(prefix + profile.meterId),
           });
           await installation.save({ session });
         }
@@ -98,9 +102,10 @@ async function insertReadingBatch(batch) {
   });
 }
 
-async function seedFullDataset({ sites = createSites(), onProgress = () => {} } = {}) {
+async function seedFullDataset({ sites = createSites(), onProgress = () => {}, env = process.env } = {}) {
+  devicePasswordPrefix(env);
   for (const Model of Object.values(models)) await Model.createIndexes();
-  const installations = await seedHierarchy(sites, onProgress);
+  const installations = await seedHierarchy(sites, onProgress, env);
   let inserted = 0;
   let processed = 0;
   for (const installation of installations) {
@@ -120,6 +125,7 @@ async function collectionCounts() {
 
 async function main() {
   try {
+    devicePasswordPrefix();
     await connectDatabase();
     const result = await seedFullDataset({ onProgress: ({ processed, inserted, district, installationCount }) => {
       if (district) console.log(`Hierarchy ready: ${district}; installations: ${installationCount}`);
@@ -128,7 +134,9 @@ async function main() {
     console.log(`Full seed complete. Inserted ${result.inserted} readings. Collection totals:`);
     console.log(JSON.stringify(await collectionCounts(), null, 2));
   } catch (error) {
-    console.error(`Seed failed (${error.code === 11000 ? "duplicate key" : error.name}). No database reset performed.`);
+    console.error(error instanceof DeviceCredentialsError
+      ? `Seed failed: ${error.message} No database reset performed.`
+      : `Seed failed (${error.code === 11000 ? "duplicate key" : error.name}). No database reset performed.`);
     process.exitCode = 1;
   } finally {
     await disconnectDatabase();
@@ -137,4 +145,4 @@ async function main() {
 }
 
 if (require.main === module) main();
-module.exports = { seedFullDataset, seedHierarchy, insertReadingBatch };
+module.exports = { seedHierarchy, insertReadingBatch };

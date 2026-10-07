@@ -54,9 +54,11 @@ Hierarchy writes use per-district transactions. Readings use one batch of 672 in
 
 The seed is setup tooling and may restore missing fixture history for an inactive installation. Device ingestion must still reject inactive installations.
 
-`scripts/seed-data.js` generates the geography and profiles; `scripts/seed.js` handles persistence. `test/seed.test.js` checks generation and rerun preservation offline. See the [README](../README.md#sample-data) for commands, credential configuration, and historical verification evidence.
+New development installations derive their password from `DEVICE_HASH_COMMON_PREFIX` plus the exact meter ID. Store only its salted scrypt hash in `deviceCredentialHash`; no random disposable-secret fallback or per-installation override is used. Prefix configuration is required before dataset seed writes. This is a development convenience, not the production provisioning scheme: real devices require independent credentials. Normal reruns preserve existing hashes and statuses; credential replacement is an explicit setup operation, never an automatic rerun or an admin API permission.
 
-The former two-installation demo is preserved separately in `seed_fixture_archive`, including copies of the shared Western/Colombo parents reused in the live hierarchy. The current seed leaves the archive untouched. Completed migration tools and the one-off verifier were removed; their history remains in the [prompt log](prompt-log.md).
+`scripts/seed-data.js` generates the geography and profiles; `scripts/seed.js` handles persistence. See the [README](../README.md#sample-data) for commands and credential configuration.
+
+The former two-installation demo is preserved separately in `seed_fixture_archive`, including copies of the shared Western/Colombo parents reused in the live hierarchy. The current seed leaves the archive untouched. Migration history belongs to the [prompt log](prompt-log.md).
 
 ### User seeding
 
@@ -144,7 +146,29 @@ The implemented user-token exchange reads the normalized email from MongoDB with
 
 HS256 tokens use `sub` for the User public UUID, `actor=user`, `role`, `readScope`, and only the applicable `provinceId` or `districtId`. Admin tokens also include `permissions=[installation-create, installation-deactivate, installation-delete]`. Claims are selected from stored fields; request bodies cannot supply identity or authorization. Include configured `iss`/`aud` and standard `iat`/`exp`. Signing key, issuer, audience, and expiry are configured as described in the [README](../README.md#getting-started). The verified-user middleware and protected province list below apply the current-principal security checks; future protected routes must use the same checks rather than trust claims alone.
 
-Login and user-read counters live in the operational `token_rate_limits` collection, outside the six public domain models. Hashed IP/email keys use unique `_id` values; atomic update pipelines reset expired windows or increment the current count, and a TTL index eventually removes expired counters. Retry a concurrent initial-upsert collision against the winning key. Database failures fail closed with the standard error. Token issuance consumes no User writes and does not change credentials or assignments.
+Login and user-read counters live in the operational `token_rate_limits` collection, outside the six public domain models. Hashed IP/email/meter keys use unique `_id` values; atomic update pipelines reset expired windows or increment the current count, and a TTL index eventually removes expired counters. Retry a concurrent initial-upsert collision against the winning key. Database failures fail closed with the standard error. Token issuance consumes no User writes and does not change credentials or assignments.
+
+### Device-token implementation
+
+`POST /auth/device-tokens` looks up SolarInstallation by the exact submitted meter ID, explicitly selects the internal `deviceCredentialHash`, and uses the shared scrypt verification helper, including dummy derivation for absent installations or invalid hash formats. The endpoint never reads the development prefix, reconstructs secrets, writes installation fields, or changes seeded credentials. Check credentials before status; inactive installations cannot receive tokens.
+
+Active installations receive only `sub` (installation public UUID), `actor=installation`, and `scope=installation-write`, plus standard `iss`, `aud`, `iat`, and `exp`. User and device issuance share the signing utility and existing HS256 environment configuration. Device issuance uses the same operational counter collection and atomic expiry rules, with separate hashed device-IP and meter-ID keys. HTTP errors and limits belong to the [device exchange contract](API_DESIGN_RULES.md#device-token-exchange).
+
+The existing user JWT middleware rejects installation actors before User lookup; these tokens cannot read `/provinces`. Installation verification and ownership middleware protect reading submission below.
+
+### Verified installations and ownership
+
+`verifyInstallationJwt` uses the shared bearer verifier for configured HS256 signature, issuer, audience, expiry, a public UUID subject, and bounded integer `iat`/`exp`. Require `actor=installation` and exactly `scope=installation-write` before querying MongoDB. Look up SolarInstallation by `publicId=sub`, explicitly selecting only `publicId` and `status`; reject absent/invalid stored installations and current inactive status. Never trust token claims for installation status, meter binding, or user privileges. Database failures propagate through the sanitized error handler.
+
+Attach only a frozen `{ id: installation.publicId }` as `req.installation`. `requireInstallationOwnership` must follow verification and requires `req.params.installationId` to match this authenticated public UUID exactly; user/admin context cannot substitute for installation authentication. Both actor types reuse cryptographic checks while retaining separate current-principal lookup and authorization behavior. See the [HTTP contract](API_DESIGN_RULES.md#installation-jwt-verification-and-ownership) for 401/403 conventions.
+
+Installation verification and ownership precede the persistence-time safeguards below.
+
+### Reading ingestion
+
+The reading service initializes declared indexes, then uses `mongoose.connection.transaction` with snapshot reads and majority writes. Inside each retry, a conditional Mongoose installation update matches the authenticated public UUID and `status=active`, setting a fresh temporary `_ingestionLock` UUID to guarantee a real parent write. If no active parent matches, reload within the session and reject inactive, absent, or invalid installation state using the HTTP contract. Save a new validated GenerationReading with server-generated public UUID, authenticated installation reference, and server receipt time in that same session. Unset the temporary lock before commit. It is internal, excluded from public JSON/projections, and never changes public installation validators. Failed saves/duplicate timestamps roll back all transaction writes.
+
+Lifecycle transactions must write the same installation document before evaluating the deletion readings guard; deactivation also writes that document. MongoDB conflicts and transaction retries therefore re-evaluate existence/status. Lifecycle committing first prevents a reading commit; ingestion committing first causes guarded deletion to find history and refuse deletion. Snapshot-only checks or separate check/insert/delete operations are insufficient. The seed's existing temporary parent write coordinates through the same document. See the [HTTP contract](API_DESIGN_RULES.md#device-reading-submission) for validation, duplicate and response behavior.
 
 ### Verified users and province access
 

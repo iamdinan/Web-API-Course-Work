@@ -14,7 +14,7 @@ const { apiBaseUrl } = require("../src/config/env");
 const config = require("../src/config/jwt");
 const { User } = require("../src/models");
 const limits = require("../src/services/token-rate-limit.service");
-const { verifyPassword } = require("../src/services/user-tokens.service");
+const { verifyPassword } = require("../src/services/passwords");
 const password = "test password with spaces ";
 let origin, server, hash;
 
@@ -155,7 +155,7 @@ test("OpenAPI exposes only the implemented user-token exchange with request/erro
   assert.deepEqual(operation.requestBody.content["application/json"].schema.required, ["email", "password"]);
   assert.equal(operation.requestBody.content["application/json"].schema.additionalProperties, false);
   for (const status of ["200", "400", "401", "406", "413", "415", "429", "500"]) assert.ok(operation.responses[status]);
-  assert.equal(spec.paths["/auth/device-tokens"], undefined);
+  assert.ok(spec.paths["/auth/device-tokens"].post);
 });
 
 test("JWT configuration rejects missing/weak keys, missing issuer/audience, and invalid lifetimes", () => {

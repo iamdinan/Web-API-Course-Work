@@ -40,6 +40,32 @@ Unknown users and password mismatches return the same 401 `INVALID_CREDENTIALS` 
 
 After request validation and before password verification, apply shared 5-attempt/15-minute IP and normalized-email counters. Exceeded limits return 429 `RATE_LIMIT_EXCEEDED` with integer `Retry-After` seconds. Rejected request shapes do not consume these credential-attempt counters. JSON negotiation and the 100 KB parser limit follow the general rules above.
 
+## Device token exchange
+
+`POST /auth/device-tokens` accepts an `application/json` object containing exactly `meterId` and `deviceSecret` as nonempty, non-whitespace strings. Preserve both values exactly. Missing/unknown fields and invalid types use 400 `INVALID_REQUEST` with message `Provide only a nonempty meterId and deviceSecret.` Parser, media type, negotiation, successful token response, and no-store/Pragma behavior follow the [user-token exchange](#user-token-exchange).
+
+Unknown meters and secret mismatches return identical 401 `INVALID_CREDENTIALS` errors with message `Invalid meter ID or device secret.` and `WWW-Authenticate: Bearer`. Verify the submitted secret before evaluating status: valid credentials for an inactive installation return 403 `INSTALLATION_INACTIVE` with message `Inactive installations cannot obtain device tokens.` Neither error returns a token. Unexpected persistence/signing failures use the standard sanitized 500.
+
+After validation and before credential lookup, apply shared MongoDB counters of 5 attempts per 15 minutes per IP and exact meter ID, using separate namespaces from user login. Excess attempts use the existing 429 login error and integer `Retry-After`. Invalid request shapes do not consume credential-attempt counters. Installation JWT claims are defined in the [architecture](architecture.md#device-token-implementation).
+
+## Installation JWT verification and ownership
+
+Installation-only middleware reads `Authorization: Bearer <token>` and verifies the configured signature/algorithm, issuer, audience, expiry, public UUID subject, and bounded issued/expiry claims. Missing, malformed, invalid, expired, or wrong-actor tokens return 401 `UNAUTHORIZED` with `WWW-Authenticate: Bearer` and message `A valid installation bearer token is required.` A deleted installation or invalid stored principal also returns this same 401. Wrong-actor tokens use 401 in both user and installation authentication.
+
+A valid installation actor without exactly `scope=installation-write` returns 403 `FORBIDDEN` with message `The token does not permit installation writes.` Current inactive installations return 403 `INSTALLATION_INACTIVE` with message `Inactive installations cannot authenticate for writes.` URL ownership mismatches return 403 `FORBIDDEN` with message `The authenticated installation cannot access this installation.` Ownership checks without authenticated installation context return the installation 401 above. All errors use the standard JSON shape; persistence failures remain sanitized 500s.
+
+These middleware protect reading submission below. Token issuance keeps its existing credential/status responses.
+
+## Device reading submission
+
+`POST /installations/{installationId}/readings` uses installation JWT verification and exact URL ownership. User/admin tokens return 401; insufficient scope, inactive status, and ownership mismatch return 403. Deleted installations return 401, including when deletion wins a concurrent insertion transaction.
+
+Accept an `application/json` object containing exactly `recordedAt`, `powerKw`, `energyKwh`, and `voltageV`. Measurements must be finite nonnegative JSON numbers; strings are not coerced. Reject missing/unknown fields, including client IDs, installation binding, and receipt time, with 400 `INVALID_REQUEST`. `recordedAt` must be a valid calendar ISO 8601 timestamp (`YYYY-MM-DDTHH:mm:ss[.SSS]Z` or an explicit `+/-HH:mm` offset), with one to three fractional digits when present. Reject timezone-free values, calendar overflow, leap seconds, and precision beyond BSON milliseconds. Clock-drift, age, and measurement upper bounds remain unresolved; none are enforced.
+
+After authentication, ownership, and body validation, consume shared counters of 30 submissions/minute per installation public UUID and IP, in separate device-write namespaces. Valid-shaped attempts, including duplicates, consume counters. Exceeded limits return 429 `RATE_LIMIT_EXCEEDED` and integer `Retry-After` seconds. Parser, negotiation, and media-type errors follow the general contract.
+
+Identity, ownership, receipt time, and atomic insertion follow the [architecture transaction strategy](architecture.md#reading-ingestion). Duplicate `(installationId, recordedAt)` returns 409 `DUPLICATE_READING` without overwriting. Return 201 with only `id`, `installationId`, both timestamps formatted with `+05:30`, and the three measurements. Include a strong ETag for the exact public representation, `Last-Modified` from `receivedAt` as an HTTP date, and `Location: /api/v1.0/installations/{installationId}/readings/{readingId}` (respect the configured prefix). All submission responses use `Cache-Control: no-store`. The Location identifies the user-authorized reading GET; see [current implementation](../README.md#current-implementation) for route availability.
+
 ## Protected province list
 
 `GET /provinces` requires a user bearer JWT. Missing/malformed/invalid/expired tokens, non-user actors, removed users, or invalid stored role/scope assignments return 401 `UNAUTHORIZED` with `WWW-Authenticate: Bearer`. Use one generic message, `A valid user bearer token is required.`; do not disclose token-validation details. Persistence failures remain sanitized 500s.

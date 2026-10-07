@@ -1,6 +1,5 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const mongoose = require("mongoose");
 const models = require("../src/models");
 const { randomUUID } = require("node:crypto");
 const { generateReadings } = require("../scripts/seed-data");

@@ -6,7 +6,7 @@ A Node.js/Express API backed by Mongoose and MongoDB Atlas for solar generation 
 
 ## Current implementation
 
-The application currently provides public `/health` and `/openapi.json`, user/admin login at `POST /auth/user-tokens`, protected `GET /provinces`, six data models, the full dataset seed, and controlled user seeding. Login and protected reads use shared MongoDB limits. Device authentication, remaining resource endpoints, Swagger UI, database readiness, and other traffic limits remain planned. The architecture describes the target API; OpenAPI describes implemented routes only.
+The application currently provides public `/health` and `/openapi.json`, user/admin login at `POST /auth/user-tokens`, device login at `POST /auth/device-tokens`, protected `GET /provinces`, six data models, the full dataset seed, and controlled user seeding. Login and protected reads use shared MongoDB limits. Installation JWT verification and URL ownership protect `POST /installations/{installationId}/readings`, with transactional active-status checks and shared device-write limits. Remaining resource endpoints, Swagger UI, database readiness, and other traffic limits remain planned. The architecture describes the target API; OpenAPI describes implemented routes only.
 
 ## Getting started
 
@@ -27,6 +27,7 @@ Requires Node.js 24 or later and access to MongoDB.
 | `JWT_ISSUER` | Token issuer (`iss`) | Required; example: `solar-generation-api` |
 | `JWT_AUDIENCE` | Token audience (`aud`) | Required; example: `solar-generation-users` |
 | `JWT_EXPIRES_IN_SECONDS` | Token lifetime, 60 to 3600 seconds | `900` |
+| `DEVICE_HASH_COMMON_PREFIX` | Development installation password prefix; required for dataset seeding | Set locally; no default |
 
 Existing process environment variables override `.env`. Keep credentials out of source control. Local development uses HTTP; production HTTPS is intended to terminate at the deployment proxy.
 
@@ -38,22 +39,24 @@ Startup connects to MongoDB before opening the HTTP listener. Watch for `MongoDB
 | --- | --- |
 | `npm run dev` | Start with automatic restart on source changes |
 | `npm start` | Start without watch mode |
-| `npm test` | Run offline health/configuration, model, seed, and user-login tests |
+| `npm test` | Run checks |
 | `npm run seed` | Insert the full sample dataset into the configured database |
 | `npm run seed:users` | Insert and verify the 36 configured accounts without changing existing users |
 
-## Local endpoints
+## API endpoints
 
-With the default configuration:
+Append the paths below to your API base URL. Use your deployed HTTPS host with the configured prefix, for example `https://<your-host>/api/v1.0`. If the app runs locally, use `http://localhost:3000/api/v1.0` (adjust the port or prefix if configured).
 
-| URL | Purpose |
-| --- | --- |
-| `http://localhost:3000/api/v1.0/health` | Application liveness; returns `{"status":"ok"}` |
-| `http://localhost:3000/api/v1.0/openapi.json` | Implemented OpenAPI specification |
-| `http://localhost:3000/api/v1.0/auth/user-tokens` | POST email/password to obtain a user/admin access token |
-| `http://localhost:3000/api/v1.0/provinces` | GET visible provinces using `Authorization: Bearer <access_token>` |
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/health` | Application liveness |
+| GET | `/openapi.json` | Implemented OpenAPI specification |
+| POST | `/auth/user-tokens` | Obtain a user/admin access token |
+| POST | `/auth/device-tokens` | Obtain an installation access token |
+| GET | `/provinces` | List provinces visible to the authenticated user |
+| POST | `/installations/{installationId}/readings` | Submit a reading for the authenticated active installation |
 
-Health does not query MongoDB. For a manual startup check, confirm the connection message and request the health URL. See the [HTTP contract](docs/API_DESIGN_RULES.md) for response and conditional-request behavior.
+Health does not query MongoDB. For a manual startup check, confirm the connection message and request the health path.
 
 ## Sample data
 
@@ -61,9 +64,9 @@ The seed creates 9 provinces, 25 districts, 25 synthetic substations, 220 instal
 
 Run `npm run seed` after configuring `MONGODB_URI`. The database must support transactions, as Atlas does. The command builds declared indexes, inserts missing data, prints collection totals (including unrelated records), and disconnects. It never clears the database.
 
-Optional local `SEED_DEVICE_SECRET_1` through `SEED_DEVICE_SECRET_220` values provide device secrets for new installations. Without them, random disposable secrets are used and their plaintext is not retained or printed. Secrets are salted and scrypt-hashed; changing these variables does not rotate existing credentials. Keep plaintext secrets out of source control.
+For development, set `DEVICE_HASH_COMMON_PREFIX` in the ignored `.env`. A new installation's password is the exact prefix followed by its stored meter ID; the seed stores only a fresh salted scrypt hash. Reruns preserve existing credentials, so changing the prefix does not rotate stored hashes. Production devices must use independent credentials.
 
-See the [architecture seed section](docs/architecture.md#seed-dataset-and-persistence) for profiles, dates, persistence, and rerun guarantees. The saved [seed verification report](docs/seed-verification.json) records a previous Atlas rerun with zero inserted readings and unchanged document hashes/counts. It is historical evidence, not a current check or one that runs automatically with the seed.
+See the [architecture seed section](docs/architecture.md#seed-dataset-and-persistence) for profiles, dates, persistence, and rerun guarantees.
 
 ## User accounts
 
@@ -90,15 +93,25 @@ The command verifies all configured accounts before committing its transaction a
 
 ## User login
 
-POST JSON containing only `email` and `password` to `/api/v1.0/auth/user-tokens`. A successful login returns `access_token`, `token_type=Bearer`, and `expires_in` in seconds. User ID, role, read scope, and regional assignment come from MongoDB. Unknown emails and incorrect passwords share the same 401 error.
+POST JSON containing only `email` and `password` to `/auth/user-tokens`. Save the returned `access_token` and send it as `Authorization: Bearer <access_token>` on user requests. See the [user-token contract](docs/API_DESIGN_RULES.md#user-token-exchange) and [OpenAPI](docs/openapi.json) for responses and limits.
 
-Login responses use `Cache-Control: no-store`. Shared counters allow 5 attempts per 15 minutes per IP and normalized email; excess attempts return 429 with `Retry-After`. This endpoint issues access tokens only; device login and remaining resource routes remain planned. See the [HTTP contract](docs/API_DESIGN_RULES.md#user-token-exchange) and [OpenAPI](docs/openapi.json) for request/error details.
+## Device login
+
+POST JSON containing only `meterId` and `deviceSecret` to `/auth/device-tokens`. Submit the original secret; for the development seed it is the configured prefix followed by the meter ID. Save the returned installation `access_token` for reading submissions. See the [device-token contract](docs/API_DESIGN_RULES.md#device-token-exchange) for responses and limits.
 
 ## Protected province list
 
-Send the access token in `Authorization: Bearer <access_token>` to `GET /api/v1.0/provinces`. National analysts/admins see all provinces; provincial analysts see their assigned province; district analysts see their district's parent province. Each request verifies the JWT and reloads current User access from MongoDB, so deleted users and stale privileges cannot bypass authorization.
+Send the user/admin bearer token to GET `/provinces`. Results follow the user's stored national, provincial, or district jurisdiction. See the [province-list contract](docs/API_DESIGN_RULES.md#protected-province-list) for filters, pagination, validators, and limits.
 
-The list returns `count`, `next`, `previous`, and public `items`. It accepts `provinceId`, `districtId`, `substationId`, `offset` (default 0), and `limit` (default 50, maximum 200); out-of-scope filters return an empty list. Responses use private scoped ETags; matching `If-None-Match` returns bodyless 304 only after authentication. Missing/invalid/expired/non-user tokens return 401. Shared read limits are 120/minute per User, including admins.
+## Submit a device reading
+
+In Postman, set `baseUrl` to your API base URL, `installationId` to the device JWT's public `sub`, and `deviceToken` to the access token from `/auth/device-tokens`. Create POST `{{baseUrl}}/installations/{{installationId}}/readings`, choose Bearer Token `{{deviceToken}}`, and Body, then raw, then JSON:
+
+```json
+{"recordedAt":"2026-10-08T12:00:00+05:30","powerKw":3.5,"energyKwh":42,"voltageV":230}
+```
+
+Use a timestamp not already stored for that installation. The reading GET identified by Location remains planned. See the [reading-submission contract](docs/API_DESIGN_RULES.md#device-reading-submission) for validation, responses, headers, and limits, and the [architecture](docs/architecture.md#reading-ingestion) for persistence coordination.
 
 ## Project layout
 
@@ -107,12 +120,12 @@ The list returns `count`, `next`, `previous`, and public `items`. It accepts `pr
 | `src/config/` | Environment configuration and database connection |
 | `src/routes/`, `src/controllers/` | Routing and HTTP responses |
 | `src/middleware/` | Common request, validation, and error handling |
-| `src/services/` | Password verification, JWT issuance, and shared login counters |
+| `src/services/` | Authentication, scoped queries, shared rate limits, and transactional persistence |
 | `src/models/` | Mongoose schemas and shared model helpers |
 | `src/app.js` | Express application and API router mount |
 | `src/index.js` | Server startup and shutdown |
 | `scripts/` | Seed data generation and persistence |
-| `test/` | Offline automated tests |
+| `test/` | Automated checks |
 
 ## Documentation
 
