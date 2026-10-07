@@ -17,20 +17,42 @@ Meters create readings. SLSEA users read data within their assigned jurisdiction
 | GenerationReading | `publicId`, `installationId`, `recordedAt`, `powerKw`, `energyKwh`, `voltageV`, `receivedAt` | Append-only; unique `(installationId, recordedAt)`; nonnegative measurements |
 | User | `publicId`, `email`, `passwordHash`, `role`, `readScope`, optional `provinceId`/`districtId` | Unique email; role `user` or `admin`; jurisdiction matches read scope; admins require `readScope=national` without regional assignment; no `active` field |
 
-- Generate randomly generated, immutable UUID v4 `publicId` values. Use them in URLs, parent references, response `id` fields, `Location`, and JWT claims.
+- Generate random, immutable UUID v4 `publicId` values. Use them in URLs, parent references, response `id` fields, `Location`, and JWT claims.
 - Express public reading timestamps in Sri Lankan time (Asia/Colombo, ISO 8601 with `+05:30`). Store BSON dates as UTC instants; formatting must not shift the stored measurement time.
 - Keep MongoDB `_id` internal. Disable Mongoose's `id` virtual derived from `_id`; omit `_id`, `__v`, and credential hashes from JSON.
 - Index `publicId` uniquely on every model and readings on `{ installationId: 1, recordedAt: -1, publicId: -1 }`. Bound regional and time-window queries in MongoDB.
 
-Seed with random UUID v4 public IDs: 9 provinces, 25 districts, at least 20 substations, 200 installations, and seven days of readings per installation. Reuse geography by name within its parent and installations by unique meter ID; upsert readings by `(installationId, recordedAt)` while preserving their IDs. Generate IDs only for missing records and use the stored parent IDs for references.
+Seed with random UUID v4 public IDs: 9 provinces, 25 districts, 25 synthetic substations (one per district), and 220 installations. Each installation has 672 readings at 15-minute intervals over seven days, totaling 147,840 readings. Reuse geography by name within its parent and installations by unique meter ID; upsert readings by `(installationId, recordedAt)` while preserving their IDs. Generate IDs only for missing records and use stored parent IDs for references.
 
-The first implemented seed is intentionally limited to one province, one district,
-one substation, two installations, and three readings per installation, with no
-users. `npm run seed` builds declared indexes, inserts missing fixture records in
-an Atlas transaction, prints total collection counts, and disconnects. Stable fixture lookup keys
-and measurement times (08:30, 08:40, 08:50 on 2026-10-07 in Sri Lanka) prevent duplicates. Existing records, including inactive status,
-credential hashes, and reading IDs/values, are preserved. The full seed remains
-deferred. References are validated public UUID strings, not ObjectId references.
+Substation names use `<district> Grid Substation` (for example, `Colombo Grid Substation`),
+and meter IDs use `METER-<district number>-<installation number>` with two-digit
+numbers (for example, `METER-01-01`). No seed prefix is included in live names.
+The completed naming correction preserved public IDs, parent references,
+credentials, statuses and readings. Normal model/API meter identity remains immutable.
+
+`npm run seed` builds declared indexes without dropping them, inserts missing
+geography/installations in per-district transactions, and inserts readings in
+one batch of 672 per installation using insert-only upserts. Each batch transaction locks
+its parent installations while inserting, then removes the transient lock field.
+Existing IDs, parent references, inactive statuses, credential hashes, and reading
+values are preserved. No users are provisioned and unrelated records are retained.
+The fixed window is 2026-09-30 00:00 through 2026-10-06 23:45 in Asia/Colombo
+(end-exclusive 2026-10-07 00:00). Power is zero overnight, with a smooth daytime
+solar curve, site capacities of 3–15 kW, and deterministic cloud/day variation.
+Cumulative kWh integrates consecutive power samples using the trapezoidal rule;
+receivedAt is five seconds after recordedAt. Stable meter IDs and the fixed window
+make interrupted runs resumable and reruns idempotent.
+
+The former two-installation demo was already moved atomically into
+`seed_fixture_archive`. Complete original records and credentials, plus copies
+of shared Western/Colombo parents, remain there. Those two parents were reused
+unchanged in the live hierarchy. Completed migration tools and obsolete small
+fixtures have been removed; the current seed neither renames nor deletes data.
+The last full Atlas rerun verification (unchanged counts and complete-document
+hashes, all parents and profiles valid) is retained as historical evidence in
+`docs/seed-verification.json`. Current offline tests verify generation, insert-only
+reruns, identity/status/credential preservation, models and API contracts.
+References are validated public UUID strings, not ObjectId references.
 Parent-plus-publicId indexes support hierarchy lists; readings have both the
 unique timestamp index and descending history index specified above, plus a
 global time/publicId index for regional history. Meter ID and normalized email

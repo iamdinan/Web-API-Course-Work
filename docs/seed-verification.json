@@ -1,0 +1,90 @@
+{
+  "verifiedAt": "2026-10-07T15:21:20.117+05:30",
+  "seedCounts": {
+    "provinces": 9,
+    "districts": 25,
+    "grid_substations": 25,
+    "solar_installations": 220,
+    "generation_readings": 147840
+  },
+  "collectionCounts": {
+    "provinces": 9,
+    "districts": 25,
+    "grid_substations": 25,
+    "solar_installations": 220,
+    "generation_readings": 147840,
+    "users": 0
+  },
+  "archive": {
+    "count": 11,
+    "preservedProvinceId": "56d5a38e-af51-4f7a-b941-724a65131f99",
+    "preservedDistrictId": "132fab46-321f-48ad-b9e6-3a45e65c20a2"
+  },
+  "secondRunInsertedReadings": 0,
+  "unchanged": true,
+  "before": {
+    "provinces": {
+      "count": 9,
+      "sha256": "a5fd20b4338b49d411835bfa5791f6611d9258114f9d6d19e47baed975829197"
+    },
+    "districts": {
+      "count": 25,
+      "sha256": "77e4a5bd04be5eb3adeef768b6411c7aadafac043a38f5eb6b693f7741b0c736"
+    },
+    "grid_substations": {
+      "count": 25,
+      "sha256": "47f513252fc4874cf26dc4e2cd8256e26bb653b0a7231d4e25c186f22c768220"
+    },
+    "solar_installations": {
+      "count": 220,
+      "sha256": "4a7a51d7ea3f6cdd7f94d027c86e090fb3a784af3a32844aa58e17a6d52266dc"
+    },
+    "generation_readings": {
+      "count": 147840,
+      "sha256": "038b14f2fa85a568cc055f55479ecf814c1b72d8e09ad8e8e49e72f91db42c31"
+    },
+    "users": {
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "seed_fixture_archive": {
+      "count": 11,
+      "sha256": "06adf110434622368d77da96d5bd687629b55e17498e722f5ba9d686af278949"
+    }
+  },
+  "after": {
+    "provinces": {
+      "count": 9,
+      "sha256": "a5fd20b4338b49d411835bfa5791f6611d9258114f9d6d19e47baed975829197"
+    },
+    "districts": {
+      "count": 25,
+      "sha256": "77e4a5bd04be5eb3adeef768b6411c7aadafac043a38f5eb6b693f7741b0c736"
+    },
+    "grid_substations": {
+      "count": 25,
+      "sha256": "47f513252fc4874cf26dc4e2cd8256e26bb653b0a7231d4e25c186f22c768220"
+    },
+    "solar_installations": {
+      "count": 220,
+      "sha256": "4a7a51d7ea3f6cdd7f94d027c86e090fb3a784af3a32844aa58e17a6d52266dc"
+    },
+    "generation_readings": {
+      "count": 147840,
+      "sha256": "038b14f2fa85a568cc055f55479ecf814c1b72d8e09ad8e8e49e72f91db42c31"
+    },
+    "users": {
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "seed_fixture_archive": {
+      "count": 11,
+      "sha256": "06adf110434622368d77da96d5bd687629b55e17498e722f5ba9d686af278949"
+    }
+  },
+  "checks": [
+    "All IDs, parent references, statuses, credentials and stored values unchanged",
+    "672 samples per installation, 15-minute intervals, seven Sri Lankan local days",
+    "Every reading matches the daytime power and integrated cumulative kWh profile"
+  ]
+}

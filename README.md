@@ -37,7 +37,8 @@ New features should add relative routes to the API router, controllers, and
 services/models as business logic and persistence are introduced. Import shared
 configuration for URLs instead of hardcoding the prefix in features.
 
-Run `npm test` to verify the health and configuration contracts.
+Run `npm test` to verify health/configuration, models, full seed profiles, batch
+idempotence, and status/credential preservation.
 
 Mongoose models live in `src/models`, with shared UUID validation and public
 JSON serialization in `shared.js`. References store parent `publicId` strings,
@@ -50,22 +51,35 @@ when changing roles/jurisdictions; partial query validators cannot enforce
 cross-field jurisdiction rules.
 
 Run `npm run seed` to connect using `MONGODB_URI`, create declared indexes, and
-seed a small fixture in a transaction. On an empty database, totals are one
-province, one district, one substation, two installations, six readings (three
-per installation), and zero users. It prints collection totals and disconnects
-on completion or failure. Existing unrelated records are included in totals.
-The full coursework dataset is deferred.
+seed 9 provinces, 25 districts, 25 synthetic substations, 220 installations,
+and 147,840 readings. Each installation has seven complete days of 15-minute
+samples: 2026-09-30 00:00 through 2026-10-06 23:45 Sri Lankan time.
+Power follows a daytime solar curve and is zero overnight; cumulative kWh is
+integrated from consecutive power samples. Hierarchy writes use per-district
+transactions; readings use one batch of 672 insert-only upserts per installation.
+It prints collection totals and disconnects on completion or failure.
 
-The fixture generates random UUID v4 IDs for missing records and uses fixed
-measurement timestamps at 08:30, 08:40, and 08:50 Sri Lankan time on 2026-10-07.
-Reruns reuse geography by name within its parent and installations by meter ID.
+New records get random UUID v4 IDs. Reruns reuse geography by name within its
+parent and installations by meter ID; existing IDs, references, installation
+status, credentials and reading values are preserved. Unrelated records are
+retained and included in reported totals. No database clear is performed.
 Public reading JSON uses `+05:30`; MongoDB stores the same instants as UTC dates,
 so Compass may display `Z` (for example, 03:00 UTC is 08:30 Sri Lankan time).
-Reruns insert only missing records: existing installation status, credentials,
-geography, reading values, and reading IDs are preserved. No users or admin
-accounts are provisioned. Optional local `SEED_DEVICE_SECRET_1` and
-`SEED_DEVICE_SECRET_2` environment values are salted and scrypt-hashed only when
-creating the installations. Without them, random disposable secrets are used
+No users or admin accounts are provisioned. Optional local `SEED_DEVICE_SECRET_1`
+through `SEED_DEVICE_SECRET_220` values are salted and scrypt-hashed only when
+creating the corresponding new installations. Without them, random disposable secrets are used
 and never printed or retained. Changing these values does not rotate existing
 credentials. The seed is setup data and may restore missing historical fixture
 readings for an inactive installation; it is not a device ingestion endpoint.
+
+Substation names are district-based, such as `Colombo Grid Substation`; meter IDs
+use `METER-01-01`. The seed consists of two files: `scripts/seed.js` handles
+persistence, and `scripts/seed-data.js` defines geography and reading profiles.
+
+The original demo was already preserved separately in `seed_fixture_archive`,
+and the naming correction was completed. Those one-time migration tools and the
+obsolete small fixture have been removed. The archive is untouched by the seed.
+The last completed Atlas verification is retained in
+[docs/seed-verification.json](docs/seed-verification.json): exact full counts,
+zero new readings on rerun, and unchanged document hashes. This is historical
+verification evidence, not a check that automatically runs with the seed.

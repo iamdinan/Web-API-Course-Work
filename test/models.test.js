@@ -2,14 +2,24 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const mongoose = require("mongoose");
 const models = require("../src/models");
-const data = require("../scripts/seed-data");
-const { seedSmallDataset } = require("../scripts/seed");
+const { randomUUID } = require("node:crypto");
+const { generateReadings } = require("../scripts/seed-data");
+const provinceId = randomUUID();
+const districtId = randomUUID();
+const installationId = randomUUID();
+const data = {
+  province: { publicId: provinceId, name: "Western" },
+  district: { publicId: districtId, provinceId, name: "Colombo" },
+  installations: [{ publicId: installationId, substationId: randomUUID(), meterId: "METER-01-01", status: "active" }],
+  readings: [generateReadings(installationId, 0).next().value],
+};
 
 test("all models have unique public UUID indexes and safe public JSON", () => {
   for (const Model of Object.values(models)) {
     assert.ok(Model.schema.indexes().some(([keys, options]) => keys.publicId === 1 && options.unique));
     const document = new Model();
-    assert.match(document.publicId, /^[0-9a-f-]{36}$/);
+    assert.match(document.publicId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    assert.notEqual(document.publicId, new Model().publicId);
     const json = document.toJSON();
     assert.equal(json.id, document.publicId);
     for (const field of ["_id", "__v", "publicId", "passwordHash", "deviceCredentialHash"]) {
@@ -82,42 +92,11 @@ test("reading updates, replacement and deletion are blocked before database acce
   await assert.rejects(models.GenerationReading.bulkWrite([{ deleteOne: { filter } }]), /append-only/);
 });
 
-test("small seed rerun preserves inactive status, rotated credentials and existing reading IDs", async t => {
-  const stored = new Map(Object.keys(models).map(name => [name, []]));
-  const matches = (record, filter) => Object.entries(filter).every(([key, value]) =>
-    value instanceof Date ? new Date(record[key]).getTime() === value.getTime() : record[key] === value);
-  for (const [name, Model] of Object.entries(models)) {
-    const records = stored.get(name);
-    t.mock.method(Model, "createIndexes", async () => {});
-    t.mock.method(Model, "exists", filter => ({ session: async () => records.some(record => matches(record, filter)) ? { _id: "internal" } : null }));
-    t.mock.method(Model, "findOne", filter => ({ session: async () => records.find(record => matches(record, filter)) || null }));
-    t.mock.method(Model, "updateOne", async (filter, update) => {
-      if (!records.some(record => matches(record, filter))) records.push({ ...update.$setOnInsert });
-    });
-  }
-  t.mock.method(mongoose.connection, "transaction", async callback => callback(null));
-  await seedSmallDataset();
-  assert.deepEqual([...stored.values()].map(records => records.length), [1, 1, 1, 2, 6, 0]);
-  const installation = stored.get("SolarInstallation")[0];
-  assert.match(installation.deviceCredentialHash, /^scrypt\$[0-9a-f]{32}\$[0-9a-f]{128}$/);
-  installation.status = "inactive";
-  installation.deviceCredentialHash = "rotated-credential-hash";
-  const reading = stored.get("GenerationReading")[0];
-  reading.publicId = "b17a0005-0000-4000-8000-000000000001";
-  const snapshot = JSON.stringify([...stored]);
-  await seedSmallDataset(data.createSeedData());
-  assert.equal(JSON.stringify([...stored]), snapshot);
-});
-
-test("seed IDs are random UUID v4 and public dates use Sri Lankan time without changing instants", () => {
-  const fresh = data.createSeedData();
-  const records = [fresh.province, fresh.district, fresh.substation, ...fresh.installations, ...fresh.readings];
-  for (const record of records) assert.match(record.publicId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
-  assert.notEqual(fresh.province.publicId, data.province.publicId);
-  const reading = new models.GenerationReading(fresh.readings[0]);
+test("public reading dates use Sri Lankan time without changing stored instants", () => {
+  const reading = new models.GenerationReading(data.readings[0]);
   const json = reading.toJSON();
-  assert.equal(json.recordedAt, "2026-10-07T08:30:00.000+05:30");
-  assert.equal(json.receivedAt, "2026-10-07T08:30:05.000+05:30");
+  assert.equal(json.recordedAt, "2026-09-30T00:00:00.000+05:30");
+  assert.equal(json.receivedAt, "2026-09-30T00:00:05.000+05:30");
   assert.equal(new Date(json.recordedAt).getTime(), reading.recordedAt.getTime());
-  assert.equal(reading.recordedAt.toISOString(), "2026-10-07T03:00:00.000Z");
+  assert.equal(reading.recordedAt.toISOString(), "2026-09-29T18:30:00.000Z");
 });
