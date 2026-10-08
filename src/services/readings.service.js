@@ -1,6 +1,38 @@
 const mongoose = require("mongoose");
 const { randomUUID } = require("node:crypto");
-const { SolarInstallation, GenerationReading } = require("../models");
+const { SolarInstallation, GenerationReading, GridSubstation, District, Province } = require("../models");
+const { publicUuid } = require("./user-principal");
+
+function readingBody(document) {
+  const value = document.toJSON();
+  // Keep POST and GET byte-identical regardless of persisted field order, and
+  // allow only the public reading fields into the representation/validator.
+  return {
+    installationId: value.installationId, recordedAt: value.recordedAt,
+    powerKw: value.powerKw, energyKwh: value.energyKwh, voltageV: value.voltageV,
+    receivedAt: value.receivedAt, id: value.id,
+  };
+}
+
+async function findReading(user, installationId, readingId) {
+  const installation = await SolarInstallation.findOne({ publicId: installationId }).select("substationId -_id").lean();
+  if (!installation || !publicUuid.test(installation.substationId)) return null;
+  const substation = await GridSubstation.findOne({ publicId: installation.substationId }).select("districtId -_id").lean();
+  if (!substation || !publicUuid.test(substation.districtId)) return null;
+  const districtFilter = { publicId: substation.districtId };
+  if (user.readScope === "province") districtFilter.provinceId = user.provinceId;
+  else if (user.readScope === "district") {
+    if (substation.districtId !== user.districtId) return null;
+  } else if (user.readScope !== "national") return null;
+  const district = await District.findOne(districtFilter).select("provinceId -_id").lean();
+  if (!district || !publicUuid.test(district.provinceId)) return null;
+  const province = await Province.findOne({ publicId: district.provinceId }).select("publicId -_id").lean();
+  if (!province) return null;
+  // Scope is established before loading the reading. Bind BOTH URL identities.
+  const reading = await GenerationReading.findOne({ publicId: readingId, installationId })
+    .select("publicId installationId recordedAt powerKw energyKwh voltageV receivedAt -_id");
+  return reading ? readingBody(reading) : null;
+}
 
 class ReadingWriteError extends Error {
   constructor(status, code, message) {
@@ -31,7 +63,7 @@ async function createReading(installationId, input) {
       const reading = new GenerationReading({ ...input, installationId, receivedAt: new Date() });
       await reading.save({ session });
       await SolarInstallation.updateOne({ publicId: installationId }, { $unset: { _ingestionLock: "" } }, { session });
-      return reading.toJSON();
+      return readingBody(reading);
     }, { readConcern: { level: "snapshot" }, writeConcern: { w: "majority" } });
   } catch (error) {
     if (error.code === 11000 && error.keyPattern?.installationId && error.keyPattern?.recordedAt) {
@@ -41,4 +73,4 @@ async function createReading(installationId, input) {
   }
 }
 
-module.exports = { createReading, ReadingWriteError };
+module.exports = { createReading, findReading, ReadingWriteError };

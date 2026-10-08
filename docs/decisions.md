@@ -97,6 +97,12 @@ This file records choices, their reasons, and unresolved questions. Concrete sch
 - **Reason:** Authentication alone cannot stop concurrent deactivation/deletion. A shared parent document write serializes ingestion with lifecycle transactions and protects history from orphaning; timestamp uniqueness prevents overwrites.
 - **Validation reason:** Explicit-zone timestamps avoid server-timezone ambiguity; millisecond precision preserves timestamp identity in BSON dates. Measurement ceilings and clock-drift/age bounds require domain decisions before enforcement. Input rules belong to the [HTTP contract](API_DESIGN_RULES.md#device-reading-submission).
 
+## D18 - Individual reading access and validators
+
+- **Choice:** Resolve current user jurisdiction through the complete installation ancestry before a reading lookup bound to both URL UUIDs. Preserve inactive history and use identical missing/out-of-scope responses.
+- **Reason:** A globally unique reading UUID alone does not establish ownership or regional access. Ancestry authorization before representation construction prevents existence and validator disclosure.
+- **Validator reason:** All authorized readers receive the same immutable reading representation, so POST and GET share its strong ETag. Private caching and renewed authorization on every request prevent a cached tag from bypassing changed access.
+
 ## Pending decisions
 
 | Topic | Decision needed |

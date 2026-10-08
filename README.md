@@ -6,7 +6,7 @@ A Node.js/Express API backed by Mongoose and MongoDB Atlas for solar generation 
 
 ## Current implementation
 
-The application currently provides public `/health` and `/openapi.json`, user/admin login at `POST /auth/user-tokens`, device login at `POST /auth/device-tokens`, protected `GET /provinces`, six data models, the full dataset seed, and controlled user seeding. Login and protected reads use shared MongoDB limits. Installation JWT verification and URL ownership protect `POST /installations/{installationId}/readings`, with transactional active-status checks and shared device-write limits. Remaining resource endpoints, Swagger UI, database readiness, and other traffic limits remain planned. The architecture describes the target API; OpenAPI describes implemented routes only.
+The application currently provides public `/health` and `/openapi.json`, user/admin login at `POST /auth/user-tokens`, device login at `POST /auth/device-tokens`, protected `GET /provinces` and `GET /installations/{installationId}/readings/{readingId}`, six data models, the full dataset seed, and controlled user seeding. Login and protected reads use shared MongoDB limits. Installation JWT verification and URL ownership protect `POST /installations/{installationId}/readings`, with transactional active-status checks and shared device-write limits. Remaining resource endpoints, Swagger UI, database readiness, and other traffic limits remain planned. The architecture describes the target API; OpenAPI describes implemented routes only.
 
 ## Getting started
 
@@ -55,6 +55,7 @@ Append the paths below to your API base URL. Use your deployed HTTPS host with t
 | POST | `/auth/device-tokens` | Obtain an installation access token |
 | GET | `/provinces` | List provinces visible to the authenticated user |
 | POST | `/installations/{installationId}/readings` | Submit a reading for the authenticated active installation |
+| GET | `/installations/{installationId}/readings/{readingId}` | Retrieve a reading within the authenticated user's jurisdiction |
 
 Health does not query MongoDB. For a manual startup check, confirm the connection message and request the health path.
 
@@ -111,7 +112,11 @@ In Postman, set `baseUrl` to your API base URL, `installationId` to the ID retur
 {"recordedAt":"2026-10-08T12:00:00+05:30","powerKw":3.5,"energyKwh":42,"voltageV":230}
 ```
 
-Use a timestamp not already stored for that installation. The reading GET identified by Location remains planned. See the [reading-submission contract](docs/API_DESIGN_RULES.md#device-reading-submission) for validation, responses, headers, and limits, and the [architecture](docs/architecture.md#reading-ingestion) for persistence coordination.
+Use a timestamp not already stored for that installation. Use the returned Location with a user/admin bearer token to retrieve the created reading. See the [reading-submission contract](docs/API_DESIGN_RULES.md#device-reading-submission) for validation, responses, headers, and limits, and the [architecture](docs/architecture.md#reading-ingestion) for persistence coordination.
+
+## Read an individual reading
+
+Send the user/admin bearer token to GET `/installations/{installationId}/readings/{readingId}`, using both public UUIDs or the Location returned by submission. Historical readings remain available for inactive installations within the user's jurisdiction. See the [individual-reading contract](docs/API_DESIGN_RULES.md#individual-reading) for responses and conditional requests. Reading lists remain planned.
 
 ## Project layout
 

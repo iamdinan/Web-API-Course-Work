@@ -76,6 +76,14 @@ Apply the current stored jurisdiction and optional geographic filters before cou
 
 Successful responses use `Cache-Control: private, no-cache` and a stable strong ETag tied to the current principal and exact scoped representation. Omit Last-Modified because no reliable geography modification time is stored. Authenticate/reload User, apply the shared 120/minute user read limit, and scope the representation before conditional GET evaluation. Matching If-None-Match returns bodyless 304 with validators. Authentication, query, and rate-limit errors are not cacheable; 429 includes Retry-After seconds.
 
+## Individual reading
+
+`GET /installations/{installationId}/readings/{readingId}` requires user JWT authentication and current stored jurisdiction, following the same 401 contract as protected province reads. Installation tokens return 401. Authenticate, consume the shared 120/minute User read limit, validate both UUID v4 path parameters (400 `INVALID_REQUEST` on failure), and resolve installation ancestry before looking up the reading or evaluating validators. National analysts/admins read nationally; provincial/district analysts read only within their assigned ancestry.
+
+Return identical 404 `NOT_FOUND` errors with message `Reading not found.` for missing installation/ancestry/reading, out-of-jurisdiction resources, and reading/installation mismatch. Return 200 with the same public reading JSON as POST, including `+05:30` timestamps. Inactive installation history remains readable.
+
+Success uses `Cache-Control: private, no-cache`, the same exact-representation strong ETag as POST, and Last-Modified derived from immutable `receivedAt`. Matching If-None-Match (including a weak tag, matching tag in a list, or `*`) returns bodyless 304 with validators and no Content-Type. If-None-Match takes precedence whenever present; a nonmatching tag returns 200 even if If-Modified-Since would match. Without If-None-Match, an If-Modified-Since at or after Last-Modified returns 304; earlier or invalid dates return 200. Compare HTTP dates at whole-second resolution. Authentication, current jurisdiction, UUIDs, resource identity, and rate limits always precede conditional handling. Errors use no-store and do not include reading validators; 429 includes Retry-After.
+
 ## Resource and query rules
 
 - Use `/api/v1.0` as the common base path, lowercase hyphenated segments, plural collection nouns, and IDs after collection names. Nest collections under their parent. The district summary is a top-level, verb-named processing function.
@@ -90,7 +98,7 @@ Successful responses use `Cache-Control: private, no-cache` and a stable strong 
 ## Caching and access
 
 - Generate stable `ETag` values for exact representations. Send `Last-Modified` only when a reliable change time exists.
-- On conditional GET, check `If-None-Match` before `If-Modified-Since`. A match returns bodyless 304. Use private caching for scoped data; never share validators across jurisdictions.
+- On conditional GET, check `If-None-Match` before `If-Modified-Since`. A match returns bodyless 304. Use private caching for scoped data. List/composite validators must reflect jurisdiction-scoped representations; an individual immutable reading uses its exact public representation validator only after current access is verified.
 - Admin PATCH/DELETE `/installations/{installationId}` optionally accept `If-Match`. Compare against the current strong ETag from the installation detail GET (not overview/history/list validators), atomically with the mutation. Absent header preserves existing behavior; no 428 requirement. Accept a quoted entity-tag list (any strong match succeeds) or `*` for an existing installation; weak tags never match, and malformed syntax returns 400. An existing installation with no match returns JSON 412 `PRECONDITION_FAILED` without change, even if PATCH would be a no-op. Authenticate, authorize, validate, and preserve missing-resource 404 before evaluating the precondition; for existing DELETE targets, evaluate If-Match before the no-readings guard (mismatch 412; match with readings 409). On success, PATCH returns the resulting strong ETag (unchanged for a no-op); DELETE remains bodyless 204 without resource validators. See `architecture.md` for atomicity.
 - Return 404 for an inaccessible atomic resource without revealing its existence; return 403 for a forbidden action on an accessible resource.
 - Use HTTPS and signed JWT bearer tokens. Resolve device ownership, stored role/jurisdiction, and current installation status using the [architecture security rules](architecture.md#security). Authenticate and authorize before processing conditional requests; validators cannot bypass read authorization.

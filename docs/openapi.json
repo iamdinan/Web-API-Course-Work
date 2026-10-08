@@ -3,7 +3,7 @@
   "info": {
     "title": "Solar Generation API",
     "version": "1.0.0",
-    "description": "Implemented endpoints: application liveness, OpenAPI, user/admin and device JWT exchange, and jurisdiction-scoped province lists. Active installations can submit append-only readings."
+    "description": "Implemented endpoints: application liveness, OpenAPI, user/admin and device JWT exchange, and jurisdiction-scoped province lists. Active installations can submit append-only readings. Users can retrieve individual readings within their stored jurisdiction."
   },
   "servers": [
     {
@@ -566,7 +566,7 @@
         },
         "responses": {
           "201": {
-            "description": "Reading created. The Location targets a planned user-authorized reading GET; that GET is not implemented yet.",
+            "description": "Reading created. Location targets the implemented user-authorized individual reading GET.",
             "headers": {
               "Location": {
                 "schema": {
@@ -575,16 +575,10 @@
                 "description": "/api/v1.0/installations/{installationId}/readings/{readingId} (configured base path)."
               },
               "ETag": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "Strong validator of the exact public reading JSON."
+                "$ref": "#/components/headers/ReadingETag"
               },
               "Last-Modified": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "HTTP date from receivedAt."
+                "$ref": "#/components/headers/ReadingLastModified"
               },
               "Cache-Control": {
                 "$ref": "#/components/headers/NoStore"
@@ -683,6 +677,177 @@
           },
           "500": {
             "description": "Unexpected failure (INTERNAL_SERVER_ERROR).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/installations/{installationId}/readings/{readingId}": {
+      "get": {
+        "operationId": "getInstallationReading",
+        "summary": "Read an individual installation reading within current user jurisdiction",
+        "description": "Requires user/admin JWT authentication and current stored jurisdiction. Resolve installation, substation, district and province before reading lookup or validators. National analysts/admins read nationally; provincial/district analysts read only within assigned ancestry. Inactive installations retain readable history. Find readings by both installationId and readingId. Missing, mismatched and out-of-jurisdiction resources return the same 404. Shared user-read limit is 120/minute per user, including admins and conditional requests. The exact public JSON and strong ETag match POST; private caching and authorization on each request prevent validators bypassing access.",
+        "security": [
+          {
+            "UserBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "installationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            }
+          },
+          {
+            "name": "readingId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Strong/weak matching tag, quoted tag list, or * returns bodyless 304 after authorization. Takes precedence over If-Modified-Since."
+          },
+          {
+            "name": "If-Modified-Since",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "HTTP date compared with receivedAt at whole-second resolution, used only without If-None-Match. Invalid dates are ignored."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized public reading",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ReadingETag"
+              },
+              "Last-Modified": {
+                "$ref": "#/components/headers/ReadingLastModified"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerationReading"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Authorized reading unchanged; no body or Content-Type",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ReadingETag"
+              },
+              "Last-Modified": {
+                "$ref": "#/components/headers/ReadingLastModified"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid installationId or readingId public UUID (INVALID_REQUEST).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or installation token, or deleted/invalid user (UNAUTHORIZED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "WWW-Authenticate": {
+                "$ref": "#/components/headers/BearerChallenge"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Reading not found (NOT_FOUND): missing ancestry/installation/reading, out of jurisdiction, or reading belongs to another installation. Identical public error for all cases.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "406": {
+            "$ref": "#/components/responses/NotAcceptable"
+          },
+          "429": {
+            "description": "Shared user-read limit exceeded (RATE_LIMIT_EXCEEDED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/LoginRetryAfter"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected persistence failure (INTERNAL_SERVER_ERROR).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -977,6 +1142,18 @@
           "type": "string"
         },
         "description": "Strong validator of the exact scoped representation and current stored principal."
+      },
+      "ReadingETag": {
+        "schema": {
+          "type": "string"
+        },
+        "description": "Strong validator of the exact public reading JSON, identical to its POST validator."
+      },
+      "ReadingLastModified": {
+        "schema": {
+          "type": "string"
+        },
+        "description": "HTTP date derived from server receivedAt, at whole-second resolution."
       }
     },
     "responses": {

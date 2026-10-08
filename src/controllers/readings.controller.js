@@ -16,4 +16,17 @@ async function postReading(req, res) {
   }
 }
 
-module.exports = { postReading };
+async function getReading(req, res) {
+  const body = await readings.findReading(req.user, req.params.installationId, req.params.readingId);
+  if (!body) {
+    return res.status(404).json({ code: "NOT_FOUND", message: "Reading not found.", details: [] });
+  }
+  // Express generates the same strong ETag as POST and evaluates freshness only
+  // after current authentication, rate limiting, jurisdiction and identity checks.
+  return res.set({
+    "Cache-Control": "private, no-cache",
+    "Last-Modified": new Date(body.receivedAt).toUTCString(),
+  }).json(body);
+}
+
+module.exports = { postReading, getReading };

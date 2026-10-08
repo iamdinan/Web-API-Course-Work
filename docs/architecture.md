@@ -176,6 +176,12 @@ Lifecycle transactions must write the same installation document before evaluati
 
 The first protected route is `GET /provinces`. National users/admins have an unrestricted province query; provincial users are constrained to their stored province UUID; district users resolve their assigned district's parent province. Filter district/substation lookups within that same jurisdiction, including preventing access to sibling districts for district users. Query provinces and counts with the resolved public-UUID filter before paging; compose public fields and scoped validators only afterward. Missing geography produces no visible province. The shared user read limit uses the User public UUID, with identical limits for admins and analysts. See the [HTTP rules](API_DESIGN_RULES.md#protected-province-list) for list, query, cache, and rejection behavior.
 
+### Individual reading access
+
+`findReading` resolves the URL installation to its substation, district, and province using public UUID references and credential-free projections. Provincial scope constrains the district query by the stored User province UUID; district scope requires the substation's district to match the stored User district UUID. National analysts/admins have no regional constraint. Every ancestor must exist; invalid/missing ancestry fails closed. Installation status does not restrict historical reads.
+
+Only after ancestry authorization, query GenerationReading with both `{ publicId: readingId, installationId }`. Project only reading public fields and serialize through the same deterministic public representation as insertion, independent of BSON field order. Generate response validators only after access and resource identity are established. The [HTTP contract](API_DESIGN_RULES.md#individual-reading) owns errors, caching, and conditional-request behavior.
+
 ## Rate limits
 
 Use shared counters with atomic updates and expiry across deployed instances. The HTTP contract defines rate-limit responses.

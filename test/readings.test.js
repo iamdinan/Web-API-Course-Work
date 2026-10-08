@@ -8,6 +8,7 @@ const { existsSync } = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const net = require("node:net");
+const http = require("node:http");
 const mongoose = require("mongoose");
 const jwt = require("jsonwebtoken");
 process.env.JWT_SIGNING_KEY = "isolated-reading-tests-key-at-least-32-bytes";
@@ -33,6 +34,33 @@ function post(input = body, access = token(), id = installationId, headers = {})
     headers: { "Content-Type": "application/json", ...(access ? { Authorization: `Bearer ${access}` } : {}), ...headers }, body: JSON.stringify(input) });
 }
 async function count() { return models.GenerationReading.countDocuments({}); }
+
+async function analyst(fields = {}) {
+  const user = await models.User.create({ email: `${randomUUID()}@example.com`, passwordHash: "test-only-hash",
+    role: "user", readScope: "national", ...fields });
+  const access = jwt.sign({ actor: "user", role: "admin", readScope: "national" }, config.signingKey,
+    { algorithm: "HS256", subject: user.publicId, issuer: config.issuer, audience: config.audience, expiresIn: 900 });
+  return { user, access };
+}
+// Raw HTTP preserves conditional headers without fetch adding cache-bypass flags.
+function read(readingId, access, id = installationId, headers = {}) {
+  return new Promise((resolve, reject) => {
+    http.get(`${origin}/installations/${id}/readings/${readingId}`, {
+      headers: { ...(access ? { Authorization: `Bearer ${access}` } : {}), ...headers },
+    }, response => {
+      let text = "";
+      response.setEncoding("utf8");
+      response.on("data", chunk => { text += chunk; });
+      response.on("end", () => resolve({ status: response.statusCode, headers: response.headers, text, body: text ? JSON.parse(text) : null }));
+      response.on("error", reject);
+    }).on("error", reject);
+  });
+}
+async function createdReading() {
+  const response = await post();
+  assert.equal(response.status, 201);
+  return { body: await response.json(), etag: response.headers.get("etag"), modified: response.headers.get("last-modified") };
+}
 
 before(async () => {
   if (!available) return;
@@ -174,6 +202,15 @@ integration("OpenAPI exposes only the reading POST with public schemas and requi
   assert.equal(spec.components.schemas.ReadingInput.additionalProperties, false);
   assert.deepEqual(spec.components.schemas.ReadingInput.required, Object.keys(body));
   assert.deepEqual(Object.keys(spec.components.schemas.GenerationReading.properties).sort(), ["id", "installationId", "recordedAt", "receivedAt", "powerKw", "energyKwh", "voltageV"].sort());
+  const individual = spec.paths["/installations/{installationId}/readings/{readingId}"];
+  assert.deepEqual(Object.keys(individual), ["get"]);
+  assert.deepEqual(individual.get.security, [{ UserBearer: [] }]);
+  assert.deepEqual(individual.get.parameters.filter(parameter => parameter.in === "path").map(parameter => parameter.name), ["installationId", "readingId"]);
+  for (const status of [200, 304, 400, 401, 404, 406, 429, 500]) assert.ok(individual.get.responses[status]);
+  assert.equal(individual.get.responses[304].content, undefined);
+  for (const status of [200, 304]) {
+    for (const header of ["ETag", "Last-Modified", "Cache-Control"]) assert.ok(individual.get.responses[status].headers[header]);
+  }
 });
 integration("concurrent duplicate submissions commit exactly one reading", async () => {
   const responses = await Promise.all([post(), post()]);
@@ -267,4 +304,150 @@ integration("ingestion committing first makes concurrent guarded deletion retain
   assert.equal(await deletion, 409);
   assert.equal(await count(), 1);
   assert.ok(await models.SolarInstallation.exists({ publicId: installationId }));
+});
+
+integration("single-reading GET serves all authorized scopes with POST-identical public JSON and validators, including inactive history", async () => {
+  const created = await createdReading();
+  const substation = await models.GridSubstation.findOne({});
+  const district = await models.District.findOne({});
+  for (const fields of [{}, { role: "admin" }, { readScope: "province", provinceId: district.provinceId },
+    { readScope: "district", districtId: substation.districtId }]) {
+    const { access } = await analyst(fields);
+    for (const status of ["active", "inactive"]) {
+      await models.SolarInstallation.updateOne({ publicId: installationId }, { $set: { status } });
+      const response = await read(created.body.id, access);
+      assert.equal(response.status, 200);
+      assert.deepEqual(response.body, created.body);
+      assert.equal(response.headers.etag, created.etag);
+      assert.equal(response.headers["last-modified"], created.modified);
+      assert.equal(response.headers["cache-control"], "private, no-cache");
+      assert.equal(response.headers.location, undefined);
+    }
+  }
+  assert.equal(await count(), 1);
+});
+
+integration("jurisdiction and both URL identities gate reading lookup and return identical private 404s", async t => {
+  const created = await createdReading();
+  const localDistrict = await models.District.findOne({});
+  const foreignProvince = await models.Province.create({ name: "Other province" });
+  const foreignDistrict = await models.District.create({ name: "Other district", provinceId: foreignProvince.publicId });
+  const sibling = await models.District.create({ name: "Sibling district", provinceId: localDistrict.provinceId });
+  let lookups = 0;
+  const original = models.GenerationReading.findOne;
+  t.mock.method(models.GenerationReading, "findOne", function (...args) {
+    lookups++; return original.apply(this, args);
+  });
+  const responses = [];
+  for (const fields of [{ readScope: "province", provinceId: foreignProvince.publicId },
+    { readScope: "district", districtId: foreignDistrict.publicId }, { readScope: "district", districtId: sibling.publicId }]) {
+    const { access } = await analyst(fields);
+    responses.push(await read(created.body.id, access, installationId, { "If-None-Match": created.etag }));
+  }
+  assert.equal(lookups, 0);
+  const { access } = await analyst();
+  responses.push(await read(created.body.id, access, randomUUID()));
+  responses.push(await read(randomUUID(), access));
+  const station = await models.GridSubstation.findOne({});
+  const otherInstallation = await models.SolarInstallation.create({ substationId: station.publicId, meterId: "OTHER-METER", deviceCredentialHash: "test-only-hash" });
+  responses.push(await read(created.body.id, access, otherInstallation.publicId, { "If-None-Match": "*" }));
+  for (const response of responses) {
+    assert.equal(response.status, 404);
+    assert.deepEqual(response.body, { code: "NOT_FOUND", message: "Reading not found.", details: [] });
+    assert.equal(response.headers["cache-control"], "no-store");
+    assert.equal(response.headers["last-modified"], undefined);
+    assert.notEqual(response.headers.etag, created.etag);
+  }
+  assert.equal(await count(), 1);
+});
+
+integration("reading GET authenticates users and validates both UUIDs before resource/validator access", async () => {
+  const created = await createdReading();
+  for (const access of [null, "invalid", token(), token({ actor: "user" }, { expiresIn: -1 })]) {
+    const response = await read(created.body.id, access, installationId, { "If-None-Match": "*" });
+    assert.equal(response.status, 401);
+    assert.equal(response.headers["www-authenticate"], "Bearer");
+    assert.equal(response.headers["cache-control"], "no-store");
+    assert.equal(response.headers["last-modified"], undefined);
+  }
+  const { user, access } = await analyst();
+  for (const [installation, reading] of [["invalid", created.body.id], [installationId, "invalid"],
+    [installationId.replace(/-4/, "-1"), created.body.id]]) {
+    const response = await read(reading, access, installation, { "If-None-Match": "*" });
+    assert.equal(response.status, 400);
+    assert.equal(response.body.code, "INVALID_REQUEST");
+  }
+  await models.User.deleteOne({ publicId: user.publicId });
+  assert.equal((await read(created.body.id, access)).status, 401);
+  assert.equal(await count(), 1);
+});
+
+integration("reading conditional GET honors weak/list/wildcard ETags, HTTP dates, and ETag precedence", async () => {
+  const created = await createdReading();
+  const { access } = await analyst();
+  const earlier = new Date(new Date(created.modified).getTime() - 1000).toUTCString();
+  const future = new Date(new Date(created.modified).getTime() + 60000).toUTCString();
+  for (const [headers, status] of [
+    [{ "If-None-Match": created.etag }, 304], [{ "If-None-Match": `W/${created.etag}` }, 304],
+    [{ "If-None-Match": `"other", ${created.etag}` }, 304], [{ "If-None-Match": "*" }, 304],
+    [{ "If-Modified-Since": created.modified }, 304], [{ "If-Modified-Since": future }, 304],
+    [{ "If-Modified-Since": earlier }, 200], [{ "If-Modified-Since": "invalid" }, 200],
+    [{ "If-None-Match": created.etag, "If-Modified-Since": earlier }, 304],
+    [{ "If-None-Match": '"other"', "If-Modified-Since": future }, 200],
+  ]) {
+    const response = await read(created.body.id, access, installationId, headers);
+    assert.equal(response.status, status);
+    assert.equal(response.headers.etag, created.etag);
+    assert.equal(response.headers["last-modified"], created.modified);
+    assert.equal(response.headers["cache-control"], "private, no-cache");
+    if (status === 304) {
+      assert.equal(response.text, "");
+      assert.equal(response.headers["content-type"], undefined);
+    }
+  }
+});
+
+integration("stale user jurisdiction and shared read limits are checked before 304", async () => {
+  const created = await createdReading();
+  const { user, access } = await analyst();
+  assert.equal((await read(created.body.id, access)).status, 200);
+  const foreignProvince = await models.Province.create({ name: "Changed jurisdiction" });
+  await models.User.updateOne({ publicId: user.publicId }, { $set: { readScope: "province", provinceId: foreignProvince.publicId } });
+  assert.equal((await read(created.body.id, access, installationId, { "If-None-Match": created.etag })).status, 404);
+  const { access: adminAccess, user: admin } = await analyst({ role: "admin" });
+  const { createHash } = require("node:crypto");
+  await Counter.create({ _id: `user-read:${createHash("sha256").update(admin.publicId).digest("hex")}`,
+    count: 120, expiresAt: new Date(Date.now() + 60000) });
+  const response = await read(created.body.id, adminAccess, installationId, { "If-None-Match": created.etag });
+  assert.equal(response.status, 429);
+  assert.ok(Number(response.headers["retry-after"]) > 0);
+  assert.equal(response.body.code, "RATE_LIMIT_EXCEEDED");
+  assert.equal(response.headers["cache-control"], "no-store");
+  assert.equal(response.headers["last-modified"], undefined);
+  assert.equal(await count(), 1);
+});
+
+integration("broken installation ancestry fails closed for national reads", async () => {
+  const created = await createdReading();
+  const { access } = await analyst();
+  for (const model of [models.Province, models.District, models.GridSubstation, models.SolarInstallation]) {
+    const saved = await model.collection.findOne({});
+    await model.collection.deleteOne({ _id: saved._id });
+    const response = await read(created.body.id, access, installationId, { "If-None-Match": "*" });
+    assert.equal(response.status, 404);
+    assert.equal(response.headers["last-modified"], undefined);
+    // Restore only this disposable fixture so every ancestry link is exercised.
+    await model.collection.insertOne(saved);
+  }
+});
+
+integration("reading persistence failures remain sanitized and non-cacheable", async t => {
+  const created = await createdReading();
+  const { access } = await analyst();
+  t.mock.method(models.GenerationReading, "findOne", () => { throw new Error("private diagnostics"); });
+  const response = await read(created.body.id, access);
+  assert.equal(response.status, 500);
+  assert.deepEqual(response.body, { code: "INTERNAL_SERVER_ERROR", message: "An unexpected error occurred.", details: [] });
+  assert.equal(response.headers["cache-control"], "no-store");
+  assert.equal(response.headers["last-modified"], undefined);
 });
