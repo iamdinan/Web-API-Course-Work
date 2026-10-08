@@ -67,4 +67,18 @@ async function getReadings(req, res) {
   return res.set({ "Cache-Control": "private, no-cache", ETag: `"${tag}"` }).json(body);
 }
 
-module.exports = { postReading, getReading, getLastReading, getReadings };
+async function getOverview(req, res) {
+  let body;
+  try {
+    body = await readings.findOverview(req.user, req.params.installationId);
+  } catch (error) {
+    if (!(error instanceof readings.ReadingAccessError)) throw error;
+    return sendError(res, 403, { code: "FORBIDDEN", message: error.message, details: [] });
+  }
+  if (!body) return sendError(res, 404, { code: "NOT_FOUND", message: "Installation not found.", details: [] });
+  const tag = createHash("sha256").update(JSON.stringify({ user: req.user, body })).digest("hex");
+  // No timestamp reliably covers installation, geography and latest reading.
+  return res.set({ "Cache-Control": "private, no-cache", ETag: `"${tag}"` }).json(body);
+}
+
+module.exports = { postReading, getReading, getLastReading, getReadings, getOverview };

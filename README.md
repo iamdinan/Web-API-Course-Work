@@ -6,7 +6,7 @@ A Node.js/Express API backed by Mongoose and MongoDB Atlas for solar generation 
 
 ## Current implementation
 
-The application currently provides public `/health` and `/openapi.json`, user/admin login at `POST /auth/user-tokens`, device login at `POST /auth/device-tokens`, protected `GET /provinces`, `GET /readings`, `GET /installations/{installationId}/readings`, `GET /installations/{installationId}/readings/{readingId}`, and `GET /installations/{installationId}/last-reading`, six data models, the full dataset seed, and controlled user seeding. Login and protected reads use shared MongoDB limits. Installation JWT verification and URL ownership protect `POST /installations/{installationId}/readings`, with transactional active-status checks and shared device-write limits. Remaining resource endpoints, Swagger UI, database readiness, and other traffic limits remain planned. The architecture describes the target API; OpenAPI describes implemented routes only.
+The application currently provides public `/health` and `/openapi.json`, user/admin login at `POST /auth/user-tokens`, device login at `POST /auth/device-tokens`, protected `GET /provinces`, `GET /readings`, `GET /installations/{installationId}/readings`, `GET /installations/{installationId}/readings/{readingId}`, `GET /installations/{installationId}/last-reading`, and `GET /installations/{installationId}/overview`, six data models, the full dataset seed, and controlled user seeding. Login and protected reads use shared MongoDB limits. Installation JWT verification and URL ownership protect `POST /installations/{installationId}/readings`, with transactional active-status checks and shared device-write limits. Remaining resource endpoints, Swagger UI, database readiness, and other traffic limits remain planned. The architecture describes the target API; OpenAPI describes implemented routes only.
 
 ## Getting started
 
@@ -59,6 +59,7 @@ Append the paths below to your API base URL. Use your deployed HTTPS host with t
 | GET | `/readings` | Page/filter regional reading history within the authenticated user's jurisdiction |
 | GET | `/installations/{installationId}/readings/{readingId}` | Retrieve a reading within the authenticated user's jurisdiction |
 | GET | `/installations/{installationId}/last-reading` | Retrieve the latest measurement within the authenticated user's jurisdiction |
+| GET | `/installations/{installationId}/overview` | Retrieve installation details, geography and latest reading within the user's jurisdiction |
 
 Health does not query MongoDB. For a manual startup check, confirm the connection message and request the health path.
 
@@ -124,6 +125,10 @@ Send the user/admin bearer token to GET `/installations/{installationId}/reading
 ## Read the latest measurement
 
 Send a user/admin bearer token to GET `/installations/{installationId}/last-reading`. The response is the reading with the greatest recordedAt, including retained inactive history. See the [latest-reading contract](docs/API_DESIGN_RULES.md#latest-reading) for access, empty results and conditional caching.
+
+## Read an installation overview
+
+Send a user/admin bearer token to GET `/installations/{installationId}/overview`. It returns installation details, related geography and the latest measurement, or null when no readings exist. Inactive installations remain available within jurisdiction. See the [overview contract](docs/API_DESIGN_RULES.md#installation-overview) and [architecture response structure](docs/architecture.md#installation-overview).
 
 ## Read installation history
 

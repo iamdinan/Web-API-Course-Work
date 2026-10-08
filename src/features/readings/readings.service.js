@@ -4,24 +4,24 @@ const { SolarInstallation, GenerationReading, GridSubstation, District, Province
 const { publicUuid } = require("../../services/user-principal");
 const { apiBaseUrl } = require("../../config/env");
 const readingFields = "publicId installationId recordedAt powerKw energyKwh voltageV receivedAt -_id";
-const { readingBody } = require("./readings.serializer");
+const { readingBody, overviewBody } = require("./readings.serializer");
 const { regionalInstallationIds, ReadingFilterError } = require("./reading-geography");
 
 async function authorizedInstallation(user, installationId, session = null) {
-  const installation = await SolarInstallation.findOne({ publicId: installationId }).select("substationId -_id").session(session).lean();
+  const installation = await SolarInstallation.findOne({ publicId: installationId }).select("publicId substationId meterId status -_id").session(session);
   if (!installation || !publicUuid.test(installation.substationId)) return false;
-  const substation = await GridSubstation.findOne({ publicId: installation.substationId }).select("districtId -_id").session(session).lean();
+  const substation = await GridSubstation.findOne({ publicId: installation.substationId }).select("publicId districtId name -_id").session(session);
   if (!substation || !publicUuid.test(substation.districtId)) return false;
-  const district = await District.findOne({ publicId: substation.districtId }).select("provinceId -_id").session(session).lean();
+  const district = await District.findOne({ publicId: substation.districtId }).select("publicId provinceId name -_id").session(session);
   if (!district || !publicUuid.test(district.provinceId)) return false;
-  const province = await Province.findOne({ publicId: district.provinceId }).select("publicId -_id").session(session).lean();
+  const province = await Province.findOne({ publicId: district.provinceId }).select("publicId name -_id").session(session);
   if (!province) return false;
   if ((user.readScope === "province" && district.provinceId !== user.provinceId) ||
       (user.readScope === "district" && substation.districtId !== user.districtId) ||
       !["national", "province", "district"].includes(user.readScope)) {
     throw new ReadingAccessError();
   }
-  return true;
+  return { installation, substation, district, province };
 }
 
 async function findReading(user, installationId, readingId) {
@@ -34,9 +34,22 @@ async function findReading(user, installationId, readingId) {
 
 async function findLastReading(user, installationId) {
   if (!await authorizedInstallation(user, installationId)) return null;
+  return latestReadingBody(installationId);
+}
+
+async function latestReadingBody(installationId, session = null) {
   const reading = await GenerationReading.findOne({ installationId })
-    .select(readingFields).sort({ recordedAt: -1, publicId: -1 });
+    .select(readingFields).session(session).sort({ recordedAt: -1, publicId: -1 });
   return reading ? readingBody(reading) : null;
+}
+
+async function findOverview(user, installationId) {
+  return mongoose.connection.transaction(async session => {
+    const ancestry = await authorizedInstallation(user, installationId, session);
+    if (!ancestry) return null;
+    const latestReading = await latestReadingBody(installationId, session);
+    return overviewBody(ancestry, latestReading);
+  }, { readConcern: { level: "snapshot" } });
 }
 
 async function listReadings(user, installationId, query) {
@@ -126,4 +139,4 @@ async function createReading(installationId, input) {
   }
 }
 
-module.exports = { createReading, findReading, findLastReading, listReadings, listRegionalReadings, ReadingFilterError, ReadingWriteError, ReadingAccessError };
+module.exports = { createReading, findReading, findLastReading, findOverview, listReadings, listRegionalReadings, ReadingFilterError, ReadingWriteError, ReadingAccessError };

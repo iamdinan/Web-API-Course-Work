@@ -1005,3 +1005,202 @@ test("OpenAPI last-reading uses user security, public reading schema and bodyles
   assert.equal(operation.responses[304].content, undefined);
   for (const status of [200, 304]) for (const name of ["ETag", "Last-Modified", "Cache-Control"]) assert.ok(operation.responses[status].headers[name]);
 });
+
+function overview(access, id = installationId, headers = {}) {
+  return rawGet(`/installations/${id}/overview`, access, headers);
+}
+
+integration("overview returns the exact public composite for all authorized scopes, empty and inactive installations", async () => {
+  const station = await models.GridSubstation.findOne({});
+  const district = await models.District.findOne({});
+  const province = await models.Province.findOne({});
+  const expected = {
+    installation: { id: installationId, substationId: station.publicId, meterId: "TEST-METER", status: "active" },
+    geography: {
+      province: { id: province.publicId, name: province.name },
+      district: { id: district.publicId, provinceId: province.publicId, name: district.name },
+      gridSubstation: { id: station.publicId, districtId: district.publicId, name: station.name },
+    },
+    latestReading: null,
+  };
+  for (const fields of [{}, { role: "admin" }, { readScope: "province", provinceId: province.publicId },
+    { readScope: "district", districtId: district.publicId }]) {
+    const { access } = await analyst(fields);
+    const result = await overview(access);
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.body, expected);
+    assert.equal(result.headers["cache-control"], "private, no-cache");
+    assert.equal(result.headers["last-modified"], undefined);
+  }
+  const readings = await history(2);
+  await models.GenerationReading.create({ installationId, recordedAt: new Date("2026-10-07T00:00:00Z"),
+    receivedAt: new Date("2026-10-09T00:00:00Z"), powerKw: 99, energyKwh: 99, voltageV: 230 });
+  await models.SolarInstallation.updateOne({ publicId: installationId }, { $set: { status: "inactive" } });
+  const { access } = await analyst();
+  expected.installation.status = "inactive";
+  expected.latestReading = (await read(readings[1].publicId, access)).body;
+  const result = await overview(access);
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body, expected);
+  for (const field of ["_id", "publicId", "__v", "deviceCredentialHash", "_ingestionLock", "passwordHash", "items"]) {
+    assert.equal(result.text.includes(`"${field}"`), false);
+  }
+});
+
+integration("overview rejects installation tokens and invalid UUIDs, returns 404 for missing ancestry, and hides error validators", async () => {
+  for (const access of [null, "invalid", token(), token({ actor: "user" }, { expiresIn: -1 })]) {
+    const result = await overview(access, installationId, { "If-None-Match": "*" });
+    assert.equal(result.status, 401);
+    assert.equal(result.headers["www-authenticate"], "Bearer");
+    assert.equal(result.headers["cache-control"], "no-store");
+    assert.equal(result.headers.etag, undefined);
+    assert.equal(result.headers["last-modified"], undefined);
+  }
+  const { access } = await analyst();
+  assert.equal((await overview(access, "invalid")).status, 400);
+  const missing = await overview(access, randomUUID(), { "If-None-Match": "*" });
+  assert.equal(missing.status, 404);
+  assert.deepEqual(missing.body, { code: "NOT_FOUND", message: "Installation not found.", details: [] });
+  assert.equal(missing.headers.etag, undefined);
+  for (const model of [models.Province, models.District, models.GridSubstation]) {
+    const record = await model.collection.findOne({});
+    await model.collection.deleteOne({ _id: record._id });
+    assert.equal((await overview(access, installationId, { "If-None-Match": "*" })).status, 404);
+    await model.collection.insertOne(record);
+  }
+});
+
+integration("overview rejects foreign provinces and sibling districts before latest-reading queries or 304", async t => {
+  const local = await models.District.findOne({});
+  const province = await models.Province.create({ name: "Foreign province" });
+  const foreign = await models.District.create({ name: "Foreign district", provinceId: province.publicId });
+  const sibling = await models.District.create({ name: "Sibling district", provinceId: local.provinceId });
+  t.mock.method(models.GenerationReading, "findOne", () => { throw new Error("Forbidden reading lookup"); });
+  for (const fields of [{ readScope: "province", provinceId: province.publicId },
+    { readScope: "district", districtId: foreign.publicId }, { readScope: "district", districtId: sibling.publicId }]) {
+    const { access } = await analyst(fields);
+    const result = await overview(access, installationId, { "If-None-Match": "*" });
+    assert.equal(result.status, 403);
+    assert.equal(result.body.code, "FORBIDDEN");
+    assert.equal(result.headers["cache-control"], "no-store");
+    assert.equal(result.headers.etag, undefined);
+    assert.equal(result.headers["last-modified"], undefined);
+  }
+});
+
+integration("overview ETags cover the whole composite with bodyless 304 and no unreliable Last-Modified", async () => {
+  const { access } = await analyst();
+  let current = await overview(access);
+  for (const value of [current.headers.etag, `W/${current.headers.etag}`, `"other", ${current.headers.etag}`, "*"]) {
+    const cached = await overview(access, installationId, { "If-None-Match": value });
+    assert.equal(cached.status, 304);
+    assert.equal(cached.text, "");
+    assert.equal(cached.headers["content-type"], undefined);
+    assert.equal(cached.headers["last-modified"], undefined);
+    assert.equal(cached.headers.etag, current.headers.etag);
+    assert.equal(cached.headers["cache-control"], "private, no-cache");
+  }
+  const future = new Date("2099-01-01T00:00:00Z").toUTCString();
+  assert.equal((await overview(access, installationId, { "If-Modified-Since": future })).status, 200);
+  assert.equal((await overview(access, installationId, { "If-None-Match": '"other"', "If-Modified-Since": future })).status, 200);
+  async function changed() {
+    const result = await overview(access, installationId, { "If-None-Match": current.headers.etag });
+    assert.equal(result.status, 200);
+    assert.notEqual(result.headers.etag, current.headers.etag);
+    current = result;
+    return result;
+  }
+  await history(2);
+  assert.ok((await changed()).body.latestReading);
+  await models.GenerationReading.create({ installationId, recordedAt: new Date("2026-10-08T01:00:00Z"),
+    receivedAt: new Date("2026-10-08T01:00:01Z"), powerKw: 8, energyKwh: 16, voltageV: 230 });
+  assert.equal((await changed()).body.latestReading.powerKw, 8);
+  await models.GenerationReading.create({ installationId, recordedAt: new Date("2026-10-07T00:00:00Z"),
+    receivedAt: new Date("2026-10-09T00:00:00Z"), powerKw: 9, energyKwh: 18, voltageV: 230 });
+  assert.equal((await overview(access, installationId, { "If-None-Match": current.headers.etag })).status, 304);
+  await models.SolarInstallation.updateOne({ publicId: installationId }, { $set: { status: "inactive" } });
+  assert.equal((await changed()).body.installation.status, "inactive");
+  for (const [model, field] of [[models.Province, "province"], [models.District, "district"], [models.GridSubstation, "gridSubstation"]]) {
+    await model.updateOne({}, { $set: { name: "Renamed" } });
+    assert.equal((await changed()).body.geography[field].name, "Renamed");
+  }
+  const { access: otherAccess } = await analyst();
+  assert.notEqual((await overview(otherAccess)).headers.etag, current.headers.etag);
+});
+
+integration("overview checks current stored access and shared rate limits before 304, and sanitizes failures", async t => {
+  const { user, access } = await analyst();
+  const tag = (await overview(access)).headers.etag;
+  const province = await models.Province.create({ name: "Changed assignment" });
+  await models.User.updateOne({ publicId: user.publicId }, { $set: { readScope: "province", provinceId: province.publicId } });
+  assert.equal((await overview(access, installationId, { "If-None-Match": tag })).status, 403);
+  await models.User.deleteOne({ publicId: user.publicId });
+  assert.equal((await overview(access, installationId, { "If-None-Match": tag })).status, 401);
+  const { user: admin, access: adminAccess } = await analyst({ role: "admin" });
+  const { createHash } = require("node:crypto");
+  await Counter.create({ _id: `user-read:${createHash("sha256").update(admin.publicId).digest("hex")}`,
+    count: 119, expiresAt: new Date(Date.now() + 60000) });
+  assert.equal((await list(adminAccess)).status, 200);
+  const limited = await overview(adminAccess, installationId, { "If-None-Match": tag });
+  assert.equal(limited.status, 429);
+  assert.ok(Number(limited.headers["retry-after"]) > 0);
+  assert.equal(limited.headers.etag, undefined);
+  const { access: another } = await analyst();
+  t.mock.method(models.GenerationReading, "findOne", () => { throw new Error("private diagnostics"); });
+  const failed = await overview(another);
+  assert.equal(failed.status, 500);
+  assert.deepEqual(failed.body, { code: "INTERNAL_SERVER_ERROR", message: "An unexpected error occurred.", details: [] });
+  assert.equal(failed.headers["cache-control"], "no-store");
+  assert.equal(failed.headers.etag, undefined);
+});
+
+integration("overview snapshot prevents mixing installation and latest reading states during concurrent changes", async t => {
+  const records = await history(1);
+  const { access } = await analyst();
+  const original = models.GenerationReading.findOne;
+  let changed = false;
+  const mock = t.mock.method(models.GenerationReading, "findOne", function (...args) {
+    const query = original.apply(this, args);
+    const execute = query.exec;
+    query.exec = async function (...options) {
+      if (!changed) {
+        changed = true;
+        // Raw writes affect only this disposable local fixture, outside the read snapshot.
+        await models.SolarInstallation.collection.updateOne({ publicId: installationId }, { $set: { status: "inactive" } });
+        await models.GenerationReading.collection.insertOne({ publicId: randomUUID(), installationId,
+          recordedAt: new Date("2026-10-08T01:00:00Z"), receivedAt: new Date("2026-10-08T01:00:01Z"),
+          powerKw: 9, energyKwh: 18, voltageV: 230 });
+      }
+      return execute.apply(this, options);
+    };
+    return query;
+  });
+  const result = await overview(access);
+  assert.equal(result.status, 200);
+  assert.equal(result.body.installation.status, "active");
+  assert.equal(result.body.latestReading.id, records[0].publicId);
+  mock.mock.restore();
+  const refreshed = await overview(access);
+  assert.equal(refreshed.body.installation.status, "inactive");
+  assert.equal(refreshed.body.latestReading.powerKw, 9);
+  assert.notEqual(refreshed.headers.etag, result.headers.etag);
+});
+
+test("OpenAPI overview documents the composite, null readings and conditional responses without Last-Modified", () => {
+  const spec = require("../docs/openapi.json");
+  const operation = spec.paths["/installations/{installationId}/overview"].get;
+  assert.deepEqual(operation.security, [{ UserBearer: [] }]);
+  assert.deepEqual(operation.parameters.filter(p => p.in === "path").map(p => p.name), ["installationId"]);
+  for (const status of [200, 304, 400, 401, 403, 404, 406, 429, 500]) assert.ok(operation.responses[status]);
+  assert.equal(operation.responses[200].content["application/json"].schema.$ref, "#/components/schemas/InstallationOverview");
+  assert.equal(operation.responses[304].content, undefined);
+  for (const status of [200, 304]) {
+    assert.equal(operation.responses[status].headers["Last-Modified"], undefined);
+    assert.ok(operation.responses[status].headers.ETag);
+    assert.ok(operation.responses[status].headers["Cache-Control"]);
+  }
+  const schema = spec.components.schemas.InstallationOverview;
+  assert.deepEqual(schema.required, ["installation", "geography", "latestReading"]);
+  assert.equal(schema.properties.latestReading.nullable, true);
+  assert.equal(schema.additionalProperties, false);
+});

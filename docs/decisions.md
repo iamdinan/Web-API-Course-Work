@@ -124,6 +124,12 @@ This file records choices, their reasons, and unresolved questions. Concrete sch
 - **Choice:** Authorize the installation with the shared ancestry helper, then select the greatest recordedAt using the existing history index. Reuse the public serializer and individual-reading validators, including receipt-based Last-Modified.
 - **Reason:** Delayed delivery must not replace a newer measurement. Retained inactive history remains useful to analysts. A single indexed lookup avoids loading or counting history; renewed access checks precede every conditional response.
 
+## D23 - Installation overview composite
+
+- **Choice:** Use installation, geography (province/district/gridSubstation) and latestReading as the minimal composite. Empty history is latestReading=null. Reuse authorized ancestry and public serializers in one read snapshot.
+- **Reason:** No exact composite fields were previously specified. This structure exposes the existing public domain fields without full history or private metadata, and a snapshot prevents mixed installation/geography/reading states.
+- **Validators:** Cover the authorized principal and complete composite in a strong ETag. Omit Last-Modified because reading receipt time cannot describe installation status or geography changes.
+
 ## Pending decisions
 
 | Topic | Decision needed |

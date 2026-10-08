@@ -123,7 +123,7 @@ Prefix every path below with `/api/v1.0`. Each row is one path. “User” means
 ## Read behavior
 
 - Apply jurisdiction and filters in database queries before counting, paging, composing views, or calculating validators. Query parameters, sorting, and list envelopes follow the [HTTP contract](API_DESIGN_RULES.md#resource-and-query-rules). Reject geographic filters with conflicting ancestry.
-- `last-reading` selects the latest measurement by recordedAt, not receivedAt. `overview` composes the installation, its geography, and latest reading; see the HTTP contract for the empty latest-reading response.
+- `last-reading` selects the latest measurement by recordedAt, not receivedAt. `overview` composes the installation, its geography, and latest reading; latest-reading alone returns 404 for empty history, while overview returns latestReading=null.
 - `summarize-district-generation?districtId=...` reports `asOf`, fresh/stale installation counts, current power, today's energy, and incomplete-energy count. Use Asia/Colombo day boundaries and a 30-minute freshness threshold. Calculate energy from counter changes with reset/baseline handling, not the sum of cumulative counters.
 - Keep inactive installations and their history visible to users within jurisdiction, including lists, counts, overview, and latest-reading views. District summaries exclude inactive installations from current power and fresh/stale counts, but include their retained readings in today's energy and incomplete-energy calculation. Recompute affected validators after creation, status updates, or hard deletion.
 
@@ -189,6 +189,24 @@ Only after ancestry authorization, query GenerationReading with both `{ publicId
 ### Latest reading access
 
 `GET /installations/{installationId}/last-reading` reuses authorizedInstallation before querying GenerationReading by the installation public UUID. Use descending recordedAt/publicId with findOne and the existing installation history index. No installation status filter or domain writes occur. Missing installation/ancestry or empty history returns no reading; forbidden ancestry is rejected before querying readings. Serialize through readingBody and share individual-reading response/conditional handling after authorization. The [latest-reading HTTP contract](API_DESIGN_RULES.md#latest-reading) owns statuses, caching and receipt-based Last-Modified.
+
+### Installation overview
+
+`GET /installations/{installationId}/overview` returns this minimal composite (public UUIDs only):
+
+```json
+{
+  "installation": { "id": "<UUID>", "substationId": "<UUID>", "meterId": "<meter identifier>", "status": "active" },
+  "geography": {
+    "province": { "id": "<UUID>", "name": "<province name>" },
+    "district": { "id": "<UUID>", "provinceId": "<UUID>", "name": "<district name>" },
+    "gridSubstation": { "id": "<UUID>", "districtId": "<UUID>", "name": "<substation name>" }
+  },
+  "latestReading": null
+}
+```
+
+latestReading is either the existing public reading representation (including ISO/display timestamps) or null; no full history, counts or pagination are included. Status may be active or inactive. The shared authorizedInstallation resolver returns credential-free installation/ancestry documents after checking current jurisdiction. Reuse their model JSON transforms and explicit public field allowlists for deterministic composite serialization; reuse readingBody for the latest reading. Resolve ancestry and select the latest recordedAt/publicId in one read-only snapshot transaction, without domain writes or a second ancestry lookup. Missing installation or broken ancestry fails closed. The [HTTP contract](API_DESIGN_RULES.md#installation-overview) owns errors, scoped full-response ETags and omission of Last-Modified.
 
 ### Installation reading history
 

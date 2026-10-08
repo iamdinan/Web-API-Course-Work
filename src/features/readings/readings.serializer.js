@@ -21,4 +21,22 @@ function readingBody(document) {
   };
 }
 
-module.exports = { readingBody };
+function overviewBody(ancestry, latestReading) {
+  const installation = ancestry.installation.toJSON();
+  const province = ancestry.province.toJSON();
+  const district = ancestry.district.toJSON();
+  const substation = ancestry.substation.toJSON();
+  // Explicit public fields keep private metadata out and serialization stable.
+  return {
+    installation: { id: installation.id, substationId: installation.substationId,
+      meterId: installation.meterId, status: installation.status },
+    geography: {
+      province: { id: province.id, name: province.name },
+      district: { id: district.id, provinceId: district.provinceId, name: district.name },
+      gridSubstation: { id: substation.id, districtId: substation.districtId, name: substation.name },
+    },
+    latestReading,
+  };
+}
+
+module.exports = { readingBody, overviewBody };
