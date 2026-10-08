@@ -57,7 +57,7 @@ New development installations use the [README seed credential configuration](../
 
 `scripts/seed-data.js` generates the geography and profiles; `scripts/seed.js` handles persistence. See the [README](../README.md#sample-data) for commands and credential configuration.
 
-The seed leaves the historical `seed_fixture_archive` untouched. Archive contents and migration evidence are recorded in the [prompt log](prompt-log.md).
+The seed leaves the historical `seed_fixture_archive` untouched.
 
 ### User seeding
 

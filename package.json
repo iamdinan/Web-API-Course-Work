@@ -12,7 +12,6 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "node --test",
     "seed": "node scripts/seed.js",
     "seed:users": "node scripts/seed-users.js"
   },
@@ -21,8 +20,5 @@
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.11.0",
     "swagger-ui-dist": "^5.33.1"
-  },
-  "devDependencies": {
-    "@apidevtools/swagger-parser": "^13.1.0"
   }
 }

@@ -1,6 +1,6 @@
 # Design Decisions
 
-This file records choices, their reasons, and unresolved questions. Concrete schemas and operations live in [architecture.md](architecture.md), HTTP behavior in [API_DESIGN_RULES.md](API_DESIGN_RULES.md), and seed operations in the [README](../README.md#sample-data). Historical implementation and verification records live in [prompt-log.md](prompt-log.md).
+This file records choices, their reasons, and unresolved questions. Concrete schemas and operations live in [architecture.md](architecture.md), HTTP behavior in [API_DESIGN_RULES.md](API_DESIGN_RULES.md), and seed operations in the [README](../README.md#sample-data).
 
 ## D01 — Hierarchy and public IDs
 
@@ -160,7 +160,7 @@ Add status=active|inactive only to the paginated top-level installation list so 
 
 ## D40 - Public documentation serving
 
-Public documentation now uses the existing shared MongoDB counter at its documented 60/minute IP threshold. Serve bundled Swagger UI assets with `swagger-ui-dist`, using the prefix-aware, same-origin specification URL; this avoids another routing dependency or CDN requirement. Keep strict query rejection and disable Swagger URL overrides/online validation. The validator is development-only. No domain behavior changes; JSON operation inventory excludes HTML documentation assets.
+Public documentation now uses the existing shared MongoDB counter at its documented 60/minute IP threshold. Serve bundled Swagger UI assets with `swagger-ui-dist`, using the prefix-aware, same-origin specification URL; this avoids another routing dependency or CDN requirement. Keep strict query rejection and disable Swagger URL overrides/online validation. No domain behavior changes; JSON operation inventory excludes HTML documentation assets.
 
 ## D41 - District summary as a nested resource
 
@@ -171,4 +171,4 @@ Expose the generation summary at `/districts/{districtId}/generation-summary` to
 | Topic | Decision needed |
 | --- | --- |
 | Deployment | Unresolved for now: choose provider, HTTPS termination and trusted proxy/IP configuration. |
-| Swagger browser verification | Verify Swagger UI rendering, endpoint order, authorization and Try it out in a real browser; automated HTTP/specification checks are complete, but browser verification remains pending. |
+| Swagger browser verification | Verify Swagger UI rendering, endpoint order, authorization and Try it out in a real browser. |

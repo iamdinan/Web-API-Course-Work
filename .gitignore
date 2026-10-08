@@ -1,5 +1,4 @@
 /node_modules
 /.env
-/docs/prompt-log.md
 /atlas-credentials.env
 /seed-users.env
