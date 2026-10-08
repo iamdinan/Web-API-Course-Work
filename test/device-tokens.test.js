@@ -183,5 +183,5 @@ test("OpenAPI documents the implemented device exchange and errors", async () =>
   assert.equal(spec.components.schemas.DeviceAccessToken.additionalProperties, false);
   assert.ok(spec.components.schemas.DeviceAccessToken.required.includes("installationId"));
   for (const status of ["200", "400", "401", "403", "406", "413", "415", "429", "500"]) assert.ok(operation.responses[status]);
-  assert.equal(spec.paths["/installations/{installationId}/readings"].get, undefined);
+  assert.deepEqual(spec.paths["/installations/{installationId}/readings"].get.security, [{ UserBearer: [] }]);
 });

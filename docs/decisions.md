@@ -103,6 +103,12 @@ This file records choices, their reasons, and unresolved questions. Concrete sch
 - **Reason:** A globally unique reading UUID alone does not establish ownership or regional access. Ancestry authorization before representation construction prevents reading data and validator disclosure. Explicit forbidden responses make jurisdiction failures distinguishable from missing-resource failures; they may reveal that the parent installation exists.
 - **Validator reason:** All authorized readers receive the same immutable reading representation, so POST and GET share its strong ETag. Private caching and renewed authorization on every request prevent a cached tag from bypassing changed access.
 
+## D19 - Installation history pagination and caching
+
+- **Choice:** Reuse installation ancestry authorization for reading lists and calculate count/page in one read snapshot. Default to newest-first order using the existing history index.
+- **Reason:** Concurrent ingestion must not produce a count from one dataset and a page from another. Public-ID tie-breaking gives deterministic ordering; a context-aware full-envelope ETag tracks filters, paging, count and current access.
+- **Time validator:** Omit collection Last-Modified without a reliable revision covering the entire response. A page's maximum receivedAt cannot establish when count, membership, links or authorized context changed.
+
 ## Pending decisions
 
 | Topic | Decision needed |

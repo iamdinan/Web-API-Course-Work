@@ -44,8 +44,14 @@ async function analyst(fields = {}) {
 }
 // Raw HTTP preserves conditional headers without fetch adding cache-bypass flags.
 function read(readingId, access, id = installationId, headers = {}) {
+  return rawGet(`/installations/${id}/readings/${readingId}`, access, headers);
+}
+function list(access, query = "", id = installationId, headers = {}) {
+  return rawGet(`/installations/${id}/readings${query}`, access, headers);
+}
+function rawGet(resource, access, headers) {
   return new Promise((resolve, reject) => {
-    http.get(`${origin}/installations/${id}/readings/${readingId}`, {
+    http.get(`${origin}${resource}`, {
       headers: { ...(access ? { Authorization: `Bearer ${access}` } : {}), ...headers },
     }, response => {
       let text = "";
@@ -130,8 +136,10 @@ integration("valid reading has public server fields, headers, stable ETag and on
   assert.match(json.id, /^[0-9a-f-]{36}$/);
   assert.equal(json.installationId, installationId);
   assert.equal(json.recordedAt, "2026-10-08T12:00:00.000+05:30");
+  assert.equal(json.recordedAtDisplay, "08 Oct 2026, 12:00 PM (Sri Lanka)");
+  assert.match(json.receivedAtDisplay, /^\d{2} [A-Z][a-z]{2} \d{4}, \d{2}:\d{2} (AM|PM) \(Sri Lanka\)$/);
   assert.ok(json.receivedAt.endsWith("+05:30"));
-  assert.deepEqual(Object.keys(json).sort(), ["id", "installationId", "recordedAt", "receivedAt", "powerKw", "energyKwh", "voltageV"].sort());
+  assert.deepEqual(Object.keys(json).sort(), ["id", "installationId", "recordedAt", "receivedAt", "recordedAtDisplay", "receivedAtDisplay", "powerKw", "energyKwh", "voltageV"].sort());
   assert.equal(response.headers.get("location"), `/api/v1.0/installations/${installationId}/readings/${json.id}`);
   assert.equal(response.headers.get("last-modified"), new Date(json.receivedAt).toUTCString());
   const serialized = JSON.stringify(json);
@@ -139,6 +147,8 @@ integration("valid reading has public server fields, headers, stable ETag and on
   assert.equal(await count(), 1);
   const stored = await models.GenerationReading.findOne({ publicId: json.id });
   assert.equal(stored.receivedAt.getTime(), new Date(json.receivedAt).getTime());
+  assert.equal(stored.toObject().recordedAtDisplay, undefined);
+  assert.equal(stored.toObject().receivedAtDisplay, undefined);
   const duplicate = await post({ ...body, recordedAt: "2026-10-08T06:30:00Z", powerKw: 9 });
   assert.equal(duplicate.status, 409);
   assert.equal((await duplicate.json()).code, "DUPLICATE_READING");
@@ -191,17 +201,17 @@ integration("zero and large finite measurements and past/future times have no in
   }
   assert.equal(await count(), 2);
 });
-integration("OpenAPI exposes only the reading POST with public schemas and required headers", async () => {
+integration("OpenAPI documents only implemented reading operations with public schemas and required headers", async () => {
   const spec = await (await fetch(`${origin}/openapi.json`)).json();
   const path = spec.paths["/installations/{installationId}/readings"];
-  assert.deepEqual(Object.keys(path), ["post"]);
+  assert.deepEqual(Object.keys(path).sort(), ["get", "post"]);
   assert.deepEqual(path.post.security, [{ InstallationBearer: [] }]);
   for (const status of [201, 400, 401, 403, 406, 409, 413, 415, 429, 500]) assert.ok(path.post.responses[status]);
   for (const header of ["Location", "ETag", "Last-Modified"]) assert.ok(path.post.responses[201].headers[header]);
   assert.ok(path.post.responses[429].headers["Retry-After"]);
   assert.equal(spec.components.schemas.ReadingInput.additionalProperties, false);
   assert.deepEqual(spec.components.schemas.ReadingInput.required, Object.keys(body));
-  assert.deepEqual(Object.keys(spec.components.schemas.GenerationReading.properties).sort(), ["id", "installationId", "recordedAt", "receivedAt", "powerKw", "energyKwh", "voltageV"].sort());
+  assert.deepEqual(Object.keys(spec.components.schemas.GenerationReading.properties).sort(), ["id", "installationId", "recordedAt", "receivedAt", "recordedAtDisplay", "receivedAtDisplay", "powerKw", "energyKwh", "voltageV"].sort());
   const individual = spec.paths["/installations/{installationId}/readings/{readingId}"];
   assert.deepEqual(Object.keys(individual), ["get"]);
   assert.deepEqual(individual.get.security, [{ UserBearer: [] }]);
@@ -211,6 +221,10 @@ integration("OpenAPI exposes only the reading POST with public schemas and requi
   for (const status of [200, 304]) {
     for (const header of ["ETag", "Last-Modified", "Cache-Control"]) assert.ok(individual.get.responses[status].headers[header]);
   }
+  assert.deepEqual(path.get.security, [{ UserBearer: [] }]);
+  assert.deepEqual(path.get.parameters.filter(parameter => parameter.in === "query").map(parameter => parameter.name), ["offset", "limit", "from", "to", "sort"]);
+  assert.equal(path.get.responses[200].headers["Last-Modified"], undefined);
+  assert.equal(path.get.responses[304].content, undefined);
 });
 integration("concurrent duplicate submissions commit exactly one reading", async () => {
   const responses = await Promise.all([post(), post()]);
@@ -325,6 +339,25 @@ integration("single-reading GET serves all authorized scopes with POST-identical
     }
   }
   assert.equal(await count(), 1);
+});
+
+integration("display timestamps handle Colombo date rollover, midnight and noon without altering stored instants", async () => {
+  const recordedAt = new Date("2026-12-31T18:30:00.123Z");
+  const receivedAt = new Date("2027-01-01T06:30:00.456Z");
+  const record = await models.GenerationReading.create({ installationId, recordedAt, receivedAt, powerKw: 1, energyKwh: 2, voltageV: 230 });
+  const { access } = await analyst();
+  const response = await read(record.publicId, access);
+  assert.equal(response.status, 200);
+  assert.equal(response.body.recordedAtDisplay, "01 Jan 2027, 12:00 AM (Sri Lanka)");
+  assert.equal(response.body.receivedAtDisplay, "01 Jan 2027, 12:00 PM (Sri Lanka)");
+  assert.equal(response.body.recordedAt, "2027-01-01T00:00:00.123+05:30");
+  assert.equal(response.body.receivedAt, "2027-01-01T12:00:00.456+05:30");
+  assert.deepEqual((await list(access)).body.items, [response.body]);
+  const stored = await models.GenerationReading.collection.findOne({ publicId: record.publicId });
+  assert.equal(stored.recordedAt.getTime(), recordedAt.getTime());
+  assert.equal(stored.receivedAt.getTime(), receivedAt.getTime());
+  assert.equal(stored.recordedAtDisplay, undefined);
+  assert.equal(stored.receivedAtDisplay, undefined);
 });
 
 integration("jurisdiction rejects with 403 before reading lookup; missing and mismatched identities return 404", async t => {
@@ -455,5 +488,199 @@ integration("reading persistence failures remain sanitized and non-cacheable", a
   assert.equal(response.status, 500);
   assert.deepEqual(response.body, { code: "INTERNAL_SERVER_ERROR", message: "An unexpected error occurred.", details: [] });
   assert.equal(response.headers["cache-control"], "no-store");
+  assert.equal(response.headers["last-modified"], undefined);
+});
+
+async function history(size = 6) {
+  return models.GenerationReading.create(Array.from({ length: size }, (_, index) => ({
+    installationId, recordedAt: new Date(Date.UTC(2026, 9, 8, 0, index)),
+    receivedAt: new Date(Date.UTC(2026, 9, 8, 0, index, 5)), powerKw: index, energyKwh: index * 2, voltageV: 230,
+  })));
+}
+
+integration("reading list filters before counting/paging, sorts deterministically and preserves links", async () => {
+  const records = await history();
+  const { access } = await analyst();
+  const station = await models.GridSubstation.findOne({});
+  const foreign = await models.SolarInstallation.create({ substationId: station.publicId, meterId: "OTHER-HISTORY", deviceCredentialHash: "test-hash" });
+  await models.GenerationReading.create({ installationId: foreign.publicId, recordedAt: records[0].recordedAt, powerKw: 99, energyKwh: 99, voltageV: 230 });
+  const defaultPage = await list(access);
+  assert.equal(defaultPage.status, 200);
+  assert.equal(defaultPage.body.count, 6);
+  assert.deepEqual(defaultPage.body.items.map(item => item.id), records.map(record => record.publicId).reverse());
+  assert.equal(defaultPage.headers["cache-control"], "private, no-cache");
+  assert.equal(defaultPage.headers["last-modified"], undefined);
+  const filters = new URLSearchParams({ from: "2026-10-08T05:31:00+05:30", to: "2026-10-08T05:35:00+05:30", sort: "timestamp", offset: "1", limit: "2" });
+  const page = await list(access, `?${filters}`);
+  assert.equal(page.body.count, 4);
+  assert.deepEqual(page.body.items.map(item => item.id), [records[2].publicId, records[3].publicId]);
+  for (const [key, offset] of [["next", "3"], ["previous", "0"]]) {
+    const url = new URL(page.body[key], origin);
+    assert.equal(url.pathname, `/api/v1.0/installations/${installationId}/readings`);
+    for (const field of ["from", "to", "sort", "limit"]) assert.equal(url.searchParams.get(field), filters.get(field));
+    assert.equal(url.searchParams.get("offset"), offset);
+  }
+  const next = await rawGet(page.body.next.replace("/api/v1.0", ""), access, {});
+  assert.deepEqual(next.body.items.map(item => item.id), [records[4].publicId]);
+  assert.equal(next.body.next, null);
+  const reversed = await list(access, "?sort=-timestamp&limit=2&offset=1");
+  assert.deepEqual(reversed.body.items.map(item => item.id), [records[4].publicId, records[3].publicId]);
+  const single = await read(records[2].publicId, access);
+  assert.deepEqual(page.body.items[0], single.body);
+  assert.deepEqual(Object.keys(single.body).sort(), ["id", "installationId", "recordedAt", "receivedAt", "recordedAtDisplay", "receivedAtDisplay", "powerKw", "energyKwh", "voltageV"].sort());
+  const outsidePage = await list(access, "?offset=99&limit=2");
+  assert.equal(outsidePage.body.count, 6);
+  assert.deepEqual(outsidePage.body.items, []);
+  assert.equal(outsidePage.body.next, null);
+});
+
+integration("reading list applies default pagination and returns authorized empty/inactive history", async () => {
+  const { access } = await analyst();
+  assert.deepEqual((await list(access)).body, { count: 0, next: null, previous: null, items: [] });
+  const records = await history(55);
+  const initial = await list(access);
+  assert.equal(initial.body.count, 55);
+  assert.equal(initial.body.items.length, 50);
+  assert.equal(new URL(initial.body.next, origin).searchParams.get("offset"), "50");
+  const district = await models.District.findOne({});
+  await models.SolarInstallation.updateOne({ publicId: installationId }, { $set: { status: "inactive" } });
+  for (const fields of [{ role: "admin" }, { readScope: "province", provinceId: district.provinceId },
+    { readScope: "district", districtId: district.publicId }]) {
+    const { access: scoped } = await analyst(fields);
+    const result = await list(scoped, "?limit=200");
+    assert.equal(result.status, 200);
+    assert.equal(result.body.count, 55);
+    assert.equal(result.body.items.length, 55);
+  }
+  const empty = await list(access, "?from=2099-01-01T00%3A00%3A00Z");
+  assert.deepEqual(empty.body, { count: 0, next: null, previous: null, items: [] });
+  assert.equal(await count(), records.length);
+});
+
+integration("reading list rejects invalid/repeated/unsupported queries and malformed UUIDs without validators", async () => {
+  const { access } = await analyst();
+  for (const query of ["?offset=-1", "?offset=1.5", "?offset=1e2", "?offset=", "?offset=9007199254740992", "?limit=0", "?limit=201", "?limit=abc", "?sort=powerKw", "?sort=", "?limit=1&limit=2", "?from=a&from=b", "?extra=1", "?provinceId=x", "?from=2026-02-30T00:00:00Z", "?from=2026-10-08", "?to=invalid", "?from=2026-10-08T00:00:00Z&to=2026-10-08T00:00:00Z", "?from=2026-10-09T00:00:00Z&to=2026-10-08T00:00:00Z"]) {
+    const result = await list(access, query, installationId, { "If-None-Match": "*" });
+    assert.equal(result.status, 400, query);
+    assert.equal(result.body.code, "INVALID_QUERY");
+    assert.equal(result.headers.etag, undefined);
+    assert.equal(result.headers["last-modified"], undefined);
+    assert.equal(result.headers["cache-control"], "no-store");
+  }
+  const invalidId = await list(access, "", "bad-id");
+  assert.equal(invalidId.status, 400);
+  assert.equal(invalidId.body.code, "INVALID_REQUEST");
+  assert.equal(invalidId.headers.etag, undefined);
+});
+
+integration("reading list denied requests expose no readings, counts or validators and do not query history", async t => {
+  await history();
+  t.mock.method(models.GenerationReading, "find", () => { throw new Error("Denied request must not query history"); });
+  t.mock.method(models.GenerationReading, "countDocuments", () => { throw new Error("Denied request must not count history"); });
+  const denied = [];
+  const unacceptable = await list(null, "", installationId, { Accept: "text/html" });
+  assert.equal(unacceptable.status, 406);
+  assert.equal(unacceptable.text, "");
+  assert.equal(unacceptable.headers.etag, undefined);
+  assert.equal(unacceptable.headers["cache-control"], "no-store");
+  for (const access of [null, "invalid-token", token(), token({ actor: "user" }, { expiresIn: -1 })]) {
+    denied.push([await list(access, "", installationId, { "If-None-Match": "*" }), 401]);
+  }
+  const otherProvince = await models.Province.create({ name: "Other scope" });
+  const otherDistrict = await models.District.create({ name: "Other scope district", provinceId: otherProvince.publicId });
+  const localDistrict = await models.District.findOne({ name: "Test district" });
+  const sibling = await models.District.create({ name: "Sibling scope", provinceId: localDistrict.provinceId });
+  for (const fields of [{ readScope: "province", provinceId: otherProvince.publicId },
+    { readScope: "district", districtId: otherDistrict.publicId }, { readScope: "district", districtId: sibling.publicId }]) {
+    const { access } = await analyst(fields);
+    denied.push([await list(access, "", installationId, { "If-None-Match": "*" }), 403]);
+  }
+  const { access, user } = await analyst();
+  denied.push([await list(access, "", randomUUID()), 404]);
+  const { createHash } = require("node:crypto");
+  await Counter.updateOne({ _id: `user-read:${createHash("sha256").update(user.publicId).digest("hex")}` },
+    { $set: { count: 120, expiresAt: new Date(Date.now() + 60000) } }, { upsert: true });
+  const limited = await list(access, "", installationId, { "If-None-Match": "*" });
+  denied.push([limited, 429]);
+  assert.ok(Number(limited.headers["retry-after"]) > 0);
+  for (const [response, expected] of denied) {
+    assert.equal(response.status, expected);
+    assert.equal(response.body.items, undefined);
+    assert.equal(response.body.count, undefined);
+    assert.equal(response.headers.etag, undefined);
+    assert.equal(response.headers["last-modified"], undefined);
+    assert.equal(response.headers["cache-control"], "no-store");
+  }
+});
+
+integration("reading list ETags cover context, query and whole envelope, with authorization before conditional GET", async () => {
+  await history();
+  const { access, user } = await analyst();
+  const first = await list(access, "?limit=1");
+  const tag = first.headers.etag;
+  assert.match(tag, /^"[0-9a-f]+"$/);
+  for (const match of [tag, `W/${tag}`, `"other", ${tag}`, "*"]) {
+    const result = await list(access, "?limit=1", installationId, { "If-None-Match": match });
+    assert.equal(result.status, 304);
+    assert.equal(result.text, "");
+    assert.equal(result.headers["content-type"], undefined);
+    assert.equal(result.headers.etag, tag);
+    assert.equal(result.headers["cache-control"], "private, no-cache");
+  }
+  const future = new Date(Date.now() + 86400000).toUTCString();
+  assert.equal((await list(access, "?limit=1", installationId, { "If-Modified-Since": future })).status, 200);
+  assert.equal((await list(access, "?limit=1", installationId, { "If-None-Match": '"other"', "If-Modified-Since": future })).status, 200);
+  assert.notEqual((await list(access, "?limit=1&offset=1")).headers.etag, tag);
+  assert.notEqual((await list(access, "?limit=1&sort=timestamp")).headers.etag, tag);
+  const { access: otherAccess } = await analyst();
+  assert.notEqual((await list(otherAccess, "?limit=1")).headers.etag, tag);
+  // Insertion outside the displayed first page still changes the total and tag.
+  await models.GenerationReading.create({ installationId, recordedAt: new Date("2000-01-01T00:00:00Z"), powerKw: 1, energyKwh: 1, voltageV: 230 });
+  const changed = await list(access, "?limit=1", installationId, { "If-None-Match": tag });
+  assert.equal(changed.status, 200);
+  assert.equal(changed.body.count, 7);
+  assert.deepEqual(changed.body.items, first.body.items);
+  assert.notEqual(changed.headers.etag, tag);
+  const foreignProvince = await models.Province.create({ name: "New scope" });
+  await models.User.updateOne({ publicId: user.publicId }, { $set: { readScope: "province", provinceId: foreignProvince.publicId } });
+  const denied = await list(access, "?limit=1", installationId, { "If-None-Match": changed.headers.etag });
+  assert.equal(denied.status, 403);
+  assert.equal(denied.headers.etag, undefined);
+  await models.User.deleteOne({ publicId: user.publicId });
+  assert.equal((await list(access)).status, 401);
+});
+
+integration("reading list keeps count and page in one snapshot during concurrent insertion", async t => {
+  await history();
+  const { access } = await analyst();
+  const original = models.GenerationReading.countDocuments;
+  const mock = t.mock.method(models.GenerationReading, "countDocuments", function (...args) {
+    const query = original.apply(this, args);
+    const execute = query.exec;
+    query.exec = async function (...executionArgs) {
+      const value = await execute.apply(this, executionArgs);
+      await models.GenerationReading.create({ installationId, recordedAt: new Date("2026-10-09T00:00:00Z"), powerKw: 1, energyKwh: 1, voltageV: 230 });
+      return value;
+    };
+    return query;
+  });
+  const response = await list(access);
+  mock.mock.restore();
+  assert.equal(response.status, 200);
+  assert.equal(response.body.count, 6);
+  assert.equal(response.body.items.length, 6);
+  const next = await list(access);
+  assert.equal(next.body.count, 7);
+  assert.equal(next.body.items.length, 7);
+  assert.notEqual(next.headers.etag, response.headers.etag);
+});
+
+integration("reading list persistence errors remain sanitized without validators", async t => {
+  const { access } = await analyst();
+  t.mock.method(models.GenerationReading, "countDocuments", () => { throw new Error("private database diagnostics"); });
+  const response = await list(access);
+  assert.equal(response.status, 500);
+  assert.deepEqual(response.body, { code: "INTERNAL_SERVER_ERROR", message: "An unexpected error occurred.", details: [] });
+  assert.equal(response.headers.etag, undefined);
   assert.equal(response.headers["last-modified"], undefined);
 });

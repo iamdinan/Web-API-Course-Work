@@ -178,9 +178,15 @@ The first protected route is `GET /provinces`. National users/admins have an unr
 
 ### Individual reading access
 
-`findReading` resolves the URL installation to its substation, district, and province using public UUID references and credential-free projections. After confirming complete ancestry, provincial scope compares the district's province against the stored User province UUID; district scope compares the substation's district against the stored User district UUID. Out-of-jurisdiction installations are rejected before reading lookup using the HTTP contract. National analysts/admins have no regional constraint. Every ancestor must exist; invalid/missing ancestry fails closed. Installation status does not restrict historical reads.
+The shared `authorizedInstallation` helper resolves the URL installation to its substation, district, and province using public UUID references and credential-free projections. After confirming complete ancestry, provincial scope compares the district's province against the stored User province UUID; district scope compares the substation's district against the stored User district UUID. Out-of-jurisdiction installations are rejected before reading lookup using the HTTP contract. National analysts/admins have no regional constraint. Every ancestor must exist; invalid/missing ancestry fails closed. Installation status does not restrict historical reads.
 
-Only after ancestry authorization, query GenerationReading with both `{ publicId: readingId, installationId }`. Project only reading public fields and serialize through the same deterministic public representation as insertion, independent of BSON field order. Generate response validators only after access and resource identity are established. The [HTTP contract](API_DESIGN_RULES.md#individual-reading) owns errors, caching, and conditional-request behavior.
+Only after ancestry authorization, query GenerationReading with both `{ publicId: readingId, installationId }`. Project only reading public fields and serialize through the same deterministic public representation as insertion, independent of BSON field order. The service derives recordedAtDisplay/receivedAtDisplay in Asia/Colombo for all reading responses; these fields are not stored or added to the model. ISO timestamps remain unchanged. Generate response validators only after access and resource identity are established. The [HTTP contract](API_DESIGN_RULES.md#individual-reading) owns errors, caching, and conditional-request behavior.
+
+### Installation reading history
+
+The collection and individual GETs reuse installation ancestry authorization and deterministic public reading serialization. `listReadings` uses a read-only snapshot transaction: authorize ancestry, then query the installation/time filter for count and the sorted/offset/limited page in the same session. An ingestion committing between queries cannot make count and page disagree. No model/domain writes occur. The existing descending installation/time/public-ID index supports newest-first traversal and its reverse.
+
+Counts and validators are constructed only after authorization. The whole envelope plus current principal, installation identity and effective query forms the scoped ETag input, following the protected province-list convention. No reliable collection modification time is persisted. See the [HTTP contract](API_DESIGN_RULES.md#installation-reading-history) for query rules, pagination, errors and caching.
 
 ## Rate limits
 

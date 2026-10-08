@@ -1,5 +1,7 @@
 const readings = require("../services/readings.service");
 const { apiBaseUrl } = require("../config/env");
+const { createHash } = require("node:crypto");
+const { sendError } = require("../utils/http-errors");
 
 async function postReading(req, res) {
   try {
@@ -35,4 +37,21 @@ async function getReading(req, res) {
   }).json(body);
 }
 
-module.exports = { postReading, getReading };
+async function getReadings(req, res) {
+  let body;
+  try {
+    body = await readings.listReadings(req.user, req.params.installationId, req.readingQuery);
+  } catch (error) {
+    if (!(error instanceof readings.ReadingAccessError)) throw error;
+    return sendError(res, 403, { code: "FORBIDDEN", message: error.message, details: [] });
+  }
+  if (!body) return sendError(res, 404, { code: "NOT_FOUND", message: "Installation not found.", details: [] });
+  const tag = createHash("sha256").update(JSON.stringify({
+    user: req.user, installationId: req.params.installationId, query: req.readingQuery, body,
+  })).digest("hex");
+  // No reliable collection revision exists for an entire paginated envelope.
+  // Express evaluates If-None-Match after all access, query and persistence checks.
+  return res.set({ "Cache-Control": "private, no-cache", ETag: `"${tag}"` }).json(body);
+}
+
+module.exports = { postReading, getReading, getReadings };
