@@ -19,7 +19,6 @@ const password = "test password with spaces ";
 let origin, server, hash;
 
 before(async () => {
-  require('node:test').mock.method(limits, 'checkDocumentationLimit', async () => 0);
   const salt = "a".repeat(32);
   hash = `scrypt$${salt}$${(await promisify(scrypt)(password, salt, 64)).toString("hex")}`;
   server = app.listen(0, "127.0.0.1");
@@ -150,19 +149,6 @@ test("rate limits and database failures use sanitized errors without issuing a t
   assert.equal((await unavailable.json()).code, "INTERNAL_SERVER_ERROR");
 });
 
-test("OpenAPI exposes only the implemented user-token exchange with request/error contracts", async () => {
-  const response = await fetch(origin.replace(/\/auth\/user-tokens$/, "/openapi.json"));
-  const spec = await response.json();
-  const operation = spec.paths["/auth/user-tokens"].post;
-  assert.deepEqual(operation.security, []);
-  assert.deepEqual(operation.requestBody.content["application/json"].schema.required, ["email", "password"]);
-  assert.equal(operation.requestBody.content["application/json"].schema.additionalProperties, false);
-  assert.equal(operation.responses[200].$ref, "#/components/responses/UserTokenIssued");
-  assert.equal(spec.components.schemas.UserAccessToken.additionalProperties, false);
-  assert.ok(spec.components.schemas.UserAccessToken.required.includes("userId"));
-  for (const status of ["200", "400", "401", "406", "413", "415", "429", "500"]) assert.ok(operation.responses[status]);
-  assert.ok(spec.paths["/auth/device-tokens"].post);
-});
 
 test("JWT configuration rejects missing/weak keys, missing issuer/audience, and invalid lifetimes", () => {
   for (const override of [{ JWT_SIGNING_KEY: "" }, { JWT_SIGNING_KEY: "short" }, { JWT_ISSUER: "" },

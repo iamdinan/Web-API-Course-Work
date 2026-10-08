@@ -9,6 +9,8 @@ process.env.JWT_ISSUER = 'test-issuer';
 process.env.JWT_AUDIENCE = 'test-audience';
 const app = require('../src/app');
 const { apiBaseUrl } = require('../src/config/env');
+const mongoose = require('mongoose');
+const health = require('../src/features/health/health.service');
 
 let server;
 let origin;
@@ -22,21 +24,19 @@ after(async () => {
   await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
 });
 
-test('public health returns JSON and a stable strong ETag', async () => {
+test('public health checks the database on every request without caching or conditional 304', async t => {
+  let checks = 0;
+  t.mock.method(health, 'checkDatabase', async () => { checks++; return true; });
   const response = await fetch(`${origin}${apiBaseUrl}/health`);
   assert.equal(response.status, 200);
   assert.match(response.headers.get('content-type'), /^application\/json/);
-  assert.equal(response.headers.get('cache-control'), 'no-cache');
+  assert.equal(response.headers.get('cache-control'), 'no-store');
   assert.equal(response.headers.get('x-powered-by'), null);
-  assert.deepEqual(await response.json(), { status: 'ok' });
-  const tag = response.headers.get('etag');
-  assert.match(tag, /^"[^"]+"$/);
-  const repeated = await fetch(`${origin}${apiBaseUrl}/health`);
-  assert.equal(repeated.headers.get('etag'), tag);
-  await repeated.text();
-  // fetch adds Cache-Control: no-cache to conditional requests, bypassing freshness.
+  assert.deepEqual(await response.json(), { status: 'ok', database: 'up' });
+  assert.equal(response.headers.get('etag'), null);
+  assert.equal(response.headers.get('last-modified'), null);
   const conditional = await new Promise((resolve, reject) => {
-    http.get(`${origin}${apiBaseUrl}/health`, { headers: { 'If-None-Match': tag } }, (response) => {
+    http.get(`${origin}${apiBaseUrl}/health`, { headers: { 'If-None-Match': '*', 'If-Modified-Since': 'Thu, 08 Oct 2099 00:00:00 GMT' } }, (response) => {
       let body = '';
       response.setEncoding('utf8');
       response.on('data', (chunk) => { body += chunk; });
@@ -44,17 +44,58 @@ test('public health returns JSON and a stable strong ETag', async () => {
       response.on('error', reject);
     }).on('error', reject);
   });
-  assert.equal(conditional.status, 304);
-  assert.equal(conditional.body, '');
-  assert.equal(conditional.headers.etag, tag);
-  const changed = await fetch(`${origin}${apiBaseUrl}/health`, { headers: { 'If-None-Match': '"different"' } });
-  assert.equal(changed.status, 200);
-  await changed.text();
+  assert.equal(conditional.status, 200);
+  assert.deepEqual(JSON.parse(conditional.body), { status: 'ok', database: 'up' });
+  assert.equal(conditional.headers.etag, undefined);
+  assert.equal(checks, 2);
+  health.checkDatabase.mock.mockImplementation(async () => false);
+  const unavailable = await fetch(`${origin}${apiBaseUrl}/health`, { headers: { 'If-None-Match': '*' } });
+  assert.equal(unavailable.status, 503);
+  assert.equal(unavailable.headers.get('cache-control'), 'no-store');
+  assert.equal(unavailable.headers.get('etag'), null);
+  assert.equal(unavailable.headers.get('last-modified'), null);
+  assert.deepEqual(await unavailable.json(), { code: 'DATABASE_UNAVAILABLE', message: 'Database is unavailable.', details: [] });
 });
 
-test('health respects JSON negotiation', async () => {
+test('database check requires a live connection and a successful ping with a bounded driver timeout', async t => {
+  const connection = mongoose.connection;
+  const originalDb = Object.getOwnPropertyDescriptor(connection, 'db');
+  const originalState = Object.getOwnPropertyDescriptor(connection, 'readyState');
+  t.after(() => {
+    for (const [key, descriptor] of [['db', originalDb], ['readyState', originalState]]) {
+      if (descriptor) Object.defineProperty(connection, key, descriptor);
+      else delete connection[key];
+    }
+  });
+  let calls = 0;
+  const db = { async command(command, options) {
+    calls++;
+    assert.deepEqual(command, { ping: 1 });
+    assert.deepEqual(options, { timeoutMS: 2000 });
+    return { ok: 1 };
+  } };
+  Object.defineProperty(connection, 'db', { configurable: true, writable: true, value: db });
+  Object.defineProperty(connection, 'readyState', { configurable: true, writable: true, value: 0 });
+  assert.equal(await health.checkDatabase(), false);
+  assert.equal(calls, 0);
+  connection.readyState = 1;
+  assert.equal(await health.checkDatabase(), true);
+  assert.equal(calls, 1);
+  db.command = async () => ({ ok: 0 });
+  assert.equal(await health.checkDatabase(), false);
+  for (const name of ['MongoOperationTimeoutError', 'MongoNetworkError']) {
+    db.command = async () => { const error = new Error('private connection details'); error.name = name; throw error; };
+    assert.equal(await health.checkDatabase(), false);
+  }
+  connection.db = undefined;
+  assert.equal(await health.checkDatabase(), false);
+});
+
+test('health respects JSON negotiation without querying the database', async t => {
+  t.mock.method(health, 'checkDatabase', () => assert.fail('Negotiation precedes database checks'));
   const rejected = await fetch(`${origin}${apiBaseUrl}/health`, { headers: { Accept: 'text/html' } });
   assert.equal(rejected.status, 406);
+  assert.equal(rejected.headers.get('cache-control'), 'no-store');
   assert.equal(await rejected.text(), '');
 });
 
@@ -75,12 +116,15 @@ test('served OpenAPI describes health under the configured prefix', async () => 
   const spec = await response.json();
   assert.deepEqual(spec.servers, [{ url: apiBaseUrl }]);
   assert.ok(spec.paths['/health'].get.responses['200']);
-  assert.ok(spec.paths['/health'].get.responses['304']);
+  assert.ok(spec.paths['/health'].get.responses['503']);
+  assert.equal(spec.paths['/health'].get.responses['304'], undefined);
+  assert.equal(spec.paths['/health'].get.parameters, undefined);
 });
 
 test('environment override controls route mounting and OpenAPI together', () => {
   const script = `
     const app = require('./src/app');
+    require('./src/features/health/health.service').checkDatabase = async () => true;
     require('./src/services/token-rate-limit.service').checkDocumentationLimit = async () => 0;
     const server = app.listen(0, '127.0.0.1', async () => {
       try {

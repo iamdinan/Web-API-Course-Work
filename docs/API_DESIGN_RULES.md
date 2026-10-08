@@ -23,20 +23,29 @@ Public reading timestamps `recordedAt` and `receivedAt` use ISO 8601 Sri Lankan 
 | 415 Unsupported Media Type | Write body is not JSON | JSON error. |
 | 429 Too Many Requests | Shared rate limit exceeded | JSON error; `Retry-After` in seconds. |
 | 500 Internal Server Error | Unexpected server failure | Standard JSON error with `code=INTERNAL_SERVER_ERROR`; no internal diagnostics. |
+| 503 Service Unavailable | Health database check fails | Standard JSON error with `code=DATABASE_UNAVAILABLE`; no connection details. |
 
 All JSON errors use `{ "code": "...", "message": "...", "details": [] }`. Never include credentials or stack traces.
 
 ### Health and parser behavior
 
-Public health GET returns `{ "status": "ok" }` with a stable strong ETag and `Cache-Control: no-cache`. Matching conditional requests return bodyless 304; Accept excluding JSON returns bodyless 406. Malformed JSON returns 400 `INVALID_JSON`. Oversized JSON uses the 413 response above. Health is application liveness, not a database readiness probe.
+Public health GET checks application/database availability and returns 200 `{ "status": "ok", "database": "up" }` after a successful MongoDB ping. Disconnected state, ping failure or expiry of the two-second driver timeout returns 503 `{ "code": "DATABASE_UNAVAILABLE", "message": "Database is unavailable.", "details": [] }`. Health responses use `Cache-Control: no-store` without ETag/Last-Modified; conditional headers never produce 304. Query rejection and media negotiation precede the database check. Accept excluding JSON returns bodyless 406. Malformed JSON returns 400 `INVALID_JSON`. Oversized JSON uses the 413 response above.
 
 ## Resource and query rules
 
-- Use `/api/v1.0`, lowercase hyphenated segments, plural collections and public UUID IDs; nest children under parents. The verb-named district summary is a processing function. GET is safe; readings are append-only. No general update/PUT or user-management routes. Design targets Richardson Level 2.
+- Use `/api/v1.0`, lowercase hyphenated segments, plural collections and public UUID IDs; nest children under parents. GET is safe; readings are append-only. No general update/PUT or user-management routes. Design targets Richardson Level 2.
 - Representations are JSON; honor Accept application/json and */*. Writes with bodies require application/json. Bodyless DELETE needs no Content-Type. Standard parser/negotiation rules apply throughout.
 - Path UUID v4 errors use 400 INVALID_REQUEST; query errors use 400 INVALID_QUERY. Documented query fields are single-valued; reject unknown/repeated fields. Installation write UUIDs must be lowercase. Every endpoint without documented query parameters rejects all supplied options with 400 INVALID_QUERY (`This endpoint does not accept query parameters.`), including public endpoints, token exchanges and writes. Query errors use no-store without ETag/Last-Modified; query strings cannot override body fields or HTTP precondition headers.
 - Paging: offset is a nonnegative safe integer (default 0); limit is 1–200 (default 50); their sum must be safe. Filter before sort/page. Paginated envelopes are `{ "count": 0, "next": null, "previous": null, "items": [] }`; count is all authorized matches before paging. Links preserve filters/effective limit and configured prefix, changing offset. Beyond-end offsets retain count, empty items and next=null. Full nested lists return only count/items, count=items.length. Authorized empty lists return 200.
 - History uses from inclusive/to exclusive and requires from < to when both exist; timestamps follow [submission validation](#device-reading-submission). Encode positive-offset `+` as `%2B`. sort=timestamp|-timestamp (default -timestamp) orders recordedAt/publicId in the same direction. Geography filters are provinceId/districtId/substationId UUID v4 strings.
+
+Only these GETs accept query parameters; every option is optional. All other operations, including nested geography lists and district summaries, accept none.
+
+| Path | Allowed query parameters |
+| --- | --- |
+| `/installations` | provinceId, districtId, substationId, status, offset, limit |
+| `/installations/{installationId}/readings` | from, to, sort, offset, limit |
+| `/readings` | provinceId, districtId, substationId, from, to, sort, offset, limit |
 
 ## Authentication and access
 
@@ -86,13 +95,13 @@ Missing/malformed/invalid/expired/wrong-actor JWT, deleted installation or inval
 
 POST `/installations/{installationId}/readings` requires the bound active device, using the verification/ownership rules above. User/admin tokens: 401; inactive/insufficient scope/mismatch: 403; deletion winning concurrent insertion: 401.
 
-Accept exactly recordedAt/powerKw/energyKwh/voltageV. Measurements are finite nonnegative JSON numbers without coercion. Missing/unknown fields (including identity/binding/receipt fields): 400 INVALID_REQUEST. Timestamp must be calendar-valid ISO `YYYY-MM-DDTHH:mm:ss[.SSS]Z` or explicit +/-HH:mm offset, with 1–3 fractional digits if present. Reject missing zone, overflow, leap seconds and sub-millisecond precision. Clock-drift/age/upper measurement bounds remain unresolved and unenforced.
+Accept exactly recordedAt/powerKw/energyKwh/voltageV. Measurements are finite nonnegative JSON numbers without coercion. Missing/unknown fields (including identity/binding/receipt fields): 400 INVALID_REQUEST. Timestamp must be calendar-valid ISO `YYYY-MM-DDTHH:mm:ss[.SSS]Z` or explicit +/-HH:mm offset, with 1–3 fractional digits if present. Reject missing zone, overflow, leap seconds and sub-millisecond precision.
 
 Duplicate installation/timestamp: 409 DUPLICATE_READING without overwrite. Return 201 with id, installationId, recordedAt/receivedAt and their Display fields, powerKw/energyKwh/voltageV; strong ETag, receipt-based Last-Modified and prefix-aware Location `/installations/{installationId}/readings/{readingId}`. Location GET requires an authorized user/admin. All submission responses use no-store. [Architecture](architecture.md#reading-ingestion) owns server identity, timestamps and transaction coordination.
 
 ## Protected province list
 
-GET `/provinces`: complete jurisdiction-scoped `{count, items}` with id/name items sorted name/publicId ascending. Count equals items.length; omit next/previous. National/admin users see all provinces, provincial users their assigned province, district users their assigned district's parent province. Missing/broken assigned ancestry gives 200 with count=0 and items=[]. Accept no query parameters: geography filters, offset/limit and any other options return 400 INVALID_QUERY. Resolve scope/list in one read-only snapshot; apply shared authentication/read limits before query validation and private scoped ETags/conditional 304. Errors use no-store without validators; omit Last-Modified.
+GET `/provinces`: complete jurisdiction-scoped `{count, items}` with id/name items sorted name/publicId ascending. Count equals items.length; omit next/previous. National/admin users see all provinces, provincial users their assigned province, district users their assigned district's parent province. Missing/broken assigned ancestry gives 200 with count=0 and items=[]. Accept no queries. Shared authentication/read limits precede query validation; shared private caching rules apply.
 
 ## Province details
 
@@ -124,7 +133,7 @@ GET `/installations/{installationId}/last-reading`: authorize before lookup, inc
 
 ## Installation list
 
-GET `/installations`: geography filters, optional single-valued status=active|inactive and offset/limit; fixed public UUID ascending order. Omission includes both statuses. Invalid, empty, differently cased or repeated status values return 400 INVALID_QUERY. Apply geography/jurisdiction and status before count/page; paging links preserve status and ETags include the effective query. Items contain id/substationId/meterId/status in paginated envelopes. Reject sort/time filters. Explicit regional-filter errors and shared scoped cache rules apply. Read authorized ancestry/count/page in one snapshot; collection ETag differs from the detail write validator.
+GET `/installations`: accepts the [query table](#resource-and-query-rules) parameters with fixed public UUID ascending order. status=active|inactive is optional; omission includes both. Invalid, empty, differently cased or repeated status values return 400 INVALID_QUERY. Apply geography/jurisdiction and status before count/page; links preserve status and ETags include the effective query. Items contain id/substationId/meterId/status in paginated envelopes. Explicit regional-filter errors and shared scoped cache rules apply; collection ETag differs from the detail write validator.
 
 ## Substation installation list
 
@@ -140,19 +149,27 @@ GET `/installations/{installationId}/overview`: shared installation access. Retu
 
 ## Installation reading history
 
-GET `/installations/{installationId}/readings`: shared installation access, including inactive history. Accept offset/limit/from/to/sort only. Reading items/paginated envelope follow shared query rules; links preserve time filters/effective sort/limit. Authorize before count/page; read ancestry/count/page in one snapshot. Empty history/time windows are 200, not 404. Whole-envelope ETag includes principal, installation and effective query; no collection Last-Modified.
+GET `/installations/{installationId}/readings`: shared installation access, including inactive history. Reading items/paginated envelope follow the [query rules](#resource-and-query-rules); links preserve time filters/effective sort/limit. Authorize before count/page. Empty history/time windows are 200, not 404. Whole-envelope ETag includes principal, installation and effective query; no collection Last-Modified.
 
 ## Regional reading history
 
-GET `/readings`: installation-history parameters plus geography filters, retaining inactive history and applying explicit regional-filter errors. Without filters, scope follows stored jurisdiction. Read ancestry/count/page in one snapshot. Same reading envelope/order/cache rules; links preserve geography/time filters/effective sort/limit.
+GET `/readings`: accepts the [query table](#resource-and-query-rules) parameters, retaining inactive history and applying explicit regional-filter errors. Without filters, scope follows stored jurisdiction. Same reading envelope/order/cache rules; links preserve geography/time filters/effective sort/limit.
 
 ## District generation summary
 
-GET `/summarize-district-generation?districtId=...`: exactly one required districtId UUID v4; missing/invalid/repeated/other queries: 400 INVALID_QUERY. Shared district access/errors apply before queries/calculations/validators.
+GET `/districts/{districtId}/generation-summary`: districtId is a required path UUID v4; invalid UUIDs return 400 INVALID_REQUEST. Accept no query parameters, including districtId; supplied options return 400 INVALID_QUERY. Shared user authentication/read limits precede path/query validation; district access/errors apply before measurement queries/calculations/validators. Missing district or ancestry returns 404; outside jurisdiction returns 403.
 
-Return exactly districtId, asOf, freshInstallationCount, staleInstallationCount, currentPowerKw, todayEnergyKwh and incompleteEnergyInstallationCount. Capture asOf once per request; display it as `08 Oct 2026, 12:00 PM (Sri Lanka)` while retaining full millisecond precision for calculations. Read geography/status/readings in one snapshot. Active installations' latest recordedAt <= asOf is fresh if >= asOf minus 30 minutes inclusive; otherwise stale, including absent eligible readings. Sum power only for fresh active installations. Inactive sites contribute no power/fresh/stale counts.
+Return exactly districtId, asOf, freshInstallationCount, staleInstallationCount, currentPowerKw, todayEnergyKwh and incompleteEnergyInstallationCount. Capture asOf once per request; display it as `08 Oct 2026, 12:00 PM (Sri Lanka)` while retaining millisecond precision for calculations.
 
-todayEnergyKwh is observed daily energy that may be incomplete. For each active/inactive installation, order readings from Asia/Colombo midnight through asOf inclusive; sum nonnegative consecutive counter differences, skipping decreases and resuming from the lower counter. Use exact midnight baseline if available, otherwise the first in-day reading. Never use pre-midnight readings, assume zero resets, interpolate, extrapolate or estimate. Count an installation incomplete once if fewer than two daily samples, no exact midnight baseline or any decrease; retain usable observed contributions. Completeness guarantees neither continuous sampling nor energy up to asOf. No installations: zero totals/counts; no daily readings: zero energy/incomplete (also stale if active without fresh eligible reading).
+Current power uses each active installation's latest recordedAt <= asOf. It is fresh if >= asOf minus 30 minutes inclusive; otherwise stale, including absent eligible readings. Sum power only for fresh active installations. Inactive sites contribute no power/fresh/stale counts.
+
+todayEnergyKwh is observed daily energy that may be incomplete. For each active or inactive installation:
+
+1. Order readings from Asia/Colombo midnight through asOf inclusive. Use an exact midnight baseline when available, otherwise the first in-day reading.
+2. Sum nonnegative consecutive counter differences. Skip decreases and resume from the lower counter; retain usable contributions.
+3. Count the installation incomplete once if it has fewer than two daily samples, no exact midnight baseline or any decrease.
+
+Never use pre-midnight readings, assume zero resets, interpolate, extrapolate or estimate. Completeness guarantees neither continuous sampling nor energy up to asOf. No installations: zero totals/counts. Each installation without daily readings contributes zero energy and increments incompleteEnergyInstallationCount once; an active installation without a fresh eligible reading also counts as stale.
 
 Recalculate before conditional handling. ETag includes current principal and complete response, changing with displayed asOf minute or any value; sub-minute freshness expiry changes values at full precision. Time/midnight can change validators without ingestion. Shared private cache/304 rules apply; no Last-Modified.
 

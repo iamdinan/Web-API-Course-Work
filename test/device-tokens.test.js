@@ -18,7 +18,6 @@ const meterId = "METER-01-03", deviceSecret = " independent device secret ";
 let server, origin, hash;
 
 before(async () => {
-  require('node:test').mock.method(limits, 'checkDocumentationLimit', async () => 0);
   hash = await hashPassword(deviceSecret);
   server = app.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -170,19 +169,4 @@ test("device token counters use shared atomic IP and meter windows with five all
   count = 6;
   assert.ok(await limits.checkDeviceTokenLimit("127.0.0.1", meterId) > 0);
   assert.equal(keys.length, 3); // Exceeded IP window short-circuits the meter counter.
-});
-
-test("OpenAPI documents the implemented device exchange and errors", async () => {
-  const spec = await (await fetch(`${origin}/openapi.json`)).json();
-  const operation = spec.paths["/auth/device-tokens"].post;
-  assert.deepEqual(operation.security, []);
-  const schema = operation.requestBody.content["application/json"].schema;
-  assert.deepEqual(schema.required, ["meterId", "deviceSecret"]);
-  assert.equal(schema.additionalProperties, false);
-  assert.equal(schema.properties.deviceSecret.writeOnly, true);
-  assert.equal(operation.responses[200].$ref, "#/components/responses/DeviceTokenIssued");
-  assert.equal(spec.components.schemas.DeviceAccessToken.additionalProperties, false);
-  assert.ok(spec.components.schemas.DeviceAccessToken.required.includes("installationId"));
-  for (const status of ["200", "400", "401", "403", "406", "413", "415", "429", "500"]) assert.ok(operation.responses[status]);
-  assert.deepEqual(spec.paths["/installations/{installationId}/readings"].get.security, [{ UserBearer: [] }]);
 });

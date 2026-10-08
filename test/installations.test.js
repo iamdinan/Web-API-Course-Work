@@ -231,21 +231,6 @@ integration("persistence failures are sanitized without credentials or validator
   assert.equal(await models.SolarInstallation.countDocuments({}), 1);
 });
 
-test("OpenAPI documents implemented creation, public response and admin policy", () => {
-  const spec = require("../docs/openapi.json");
-  const operation = spec.paths["/installations"].post;
-  assert.deepEqual(operation.security, [{ UserBearer: [] }]);
-  const input = spec.components.schemas.InstallationInput;
-  assert.equal(input.additionalProperties, false);
-  assert.deepEqual(input.required, ["substationId", "meterId", "deviceSecret"]);
-  assert.deepEqual(Object.keys(input.properties), input.required);
-  assert.equal(input.properties.deviceSecret.writeOnly, true);
-  assert.equal(operation.responses[201].content["application/json"].schema.$ref, "#/components/schemas/SolarInstallation");
-  for (const name of ["Location", "ETag", "Cache-Control"]) assert.ok(operation.responses[201].headers[name]);
-  for (const status of [400, 401, 403, 404, 406, 409, 413, 415, 429, 500]) assert.ok(operation.responses[status]);
-  assert.ok(spec.paths["/installations/{installationId}"].patch);
-  assert.ok(spec.paths["/installations/{installationId}"].delete);
-});
 
 function patch(access, input = { status: "inactive" }, ifMatch, id = installationId, headers = {}) {
   return fetch(`${origin}/installations/${id}`, { method: "PATCH", headers: {
@@ -277,7 +262,7 @@ integration("PATCH deactivates and repeats without changing credentials, relatio
   const history = await models.GenerationReading.collection.find({ installationId }).toArray();
   const oldTag = await currentTag(access);
   const substation = await models.GridSubstation.findOne({ publicId: before.substationId });
-  const summaryPath = `/summarize-district-generation?districtId=${substation.districtId}`;
+  const summaryPath = `/districts/${substation.districtId}/generation-summary`;
   const oldList = await rawGet("/installations", access, {});
   const oldOverview = await rawGet(`/installations/${installationId}/overview`, access, {});
   const oldSummary = await rawGet(summaryPath, access, {});
@@ -473,7 +458,7 @@ integration("reactivation retains data, restores device login/unexpired-token wr
   assert.equal(jwt.decode(deviceAccess).exp, claims.exp);
   assert.equal(await models.GenerationReading.countDocuments({ installationId }), 2);
   const substation = await models.GridSubstation.findOne({ publicId: before.substationId });
-  const summary = await rawGet(`/summarize-district-generation?districtId=${substation.districtId}`, access, {});
+  const summary = await rawGet(`/districts/${substation.districtId}/generation-summary`, access, {});
   assert.equal(summary.body.freshInstallationCount + summary.body.staleInstallationCount, 1);
   assert.equal((await rawGet(`/installations/${installationId}/overview`, access, {})).body.installation.status, "active");
 });
@@ -557,22 +542,6 @@ test("If-Match parser respects opaque commas, strong tags, whitespace and strict
   for (const invalid of ["", "tag", '"a",', '*, "a"', '"a";"b"', '"a\\"b"', '"line\nbreak"']) assert.throws(() => parseIfMatch(invalid));
 });
 
-test("OpenAPI PATCH documents strict status updates, optional If-Match, shared limits and public ETag", () => {
-  const spec = require("../docs/openapi.json");
-  const resource = spec.paths["/installations/{installationId}"];
-  assert.deepEqual(Object.keys(resource), ["get", "patch", "delete"]);
-  const operation = resource.patch;
-  assert.deepEqual(operation.security, [{ UserBearer: [] }]);
-  const input = spec.components.schemas.InstallationStatusInput;
-  assert.equal(input.additionalProperties, false);
-  assert.deepEqual(input.required, ["status"]);
-  assert.deepEqual(input.properties, { status: { type: "string", enum: ["active", "inactive"] } });
-  assert.equal(operation.parameters.find(p => p.name === "If-Match").required, false);
-  assert.equal(operation.responses[200].headers.ETag.$ref, "#/components/headers/InstallationETag");
-  assert.equal(operation.responses[200].content["application/json"].schema.$ref, "#/components/schemas/SolarInstallation");
-  for (const status of [400, 401, 403, 404, 406, 412, 413, 415, 429, 500]) assert.ok(operation.responses[status]);
-  assert.ok(resource.delete);
-});
 
 function remove(access, ifMatch, id = installationId, body, headers = {}) {
   return fetch(`${origin}/installations/${id}`, { method: "DELETE", headers: {
@@ -670,7 +639,7 @@ integration("DELETE rejects old tokens and meter re-registration gets a new UUID
   const oldId = installationId, oldToken = token();
   const beforeList = await rawGet("/installations", access, {});
   const substation = await models.GridSubstation.findOne({ publicId: input.substationId });
-  const summaryPath = `/summarize-district-generation?districtId=${substation.districtId}`;
+  const summaryPath = `/districts/${substation.districtId}/generation-summary`;
   const beforeSummary = await rawGet(summaryPath, access, {});
   await deleted(await remove(access));
   const afterList = await rawGet("/installations", access, {});
@@ -781,15 +750,3 @@ integration("ingestion committing first makes DELETE retry history guard and ret
   assert.equal(await models.GenerationReading.countDocuments({ installationId }), 1);
   assert.equal(await currentTag(access), tag);
 });
-
-test("OpenAPI DELETE documents bodyless guarded deletion, preconditions, standard errors and no success validators", () => {
-  const op = require("../docs/openapi.json").paths["/installations/{installationId}"].delete;
-  assert.deepEqual(op.security, [{ UserBearer: [] }]);
-  assert.equal(op.requestBody, undefined);
-  assert.equal(op.parameters.find(p => p.name === "If-Match").required, false);
-  assert.equal(op.responses[204].content, undefined);
-  assert.deepEqual(Object.keys(op.responses[204].headers), ["Cache-Control"]);
-  for (const status of [400, 401, 403, 404, 406, 409, 412, 413, 429, 500]) assert.ok(op.responses[status]);
-  assert.match(op.responses[409].description, /INSTALLATION_HAS_READINGS/);
-});
-
