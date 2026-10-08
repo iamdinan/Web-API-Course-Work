@@ -3,7 +3,7 @@
   "info": {
     "title": "Solar Generation API",
     "version": "1.0.0",
-    "description": "Implemented endpoints: application liveness, OpenAPI, user/admin and device JWT exchange, and jurisdiction-scoped province lists. Active installations can submit append-only readings."
+    "description": "Implemented endpoints: application liveness, OpenAPI, user/admin and device JWT exchange, and jurisdiction-scoped province lists. Active installations can submit append-only readings. Users can retrieve individual readings within their stored jurisdiction. Users can page and filter installation reading history within current jurisdiction."
   },
   "servers": [
     {
@@ -566,7 +566,7 @@
         },
         "responses": {
           "201": {
-            "description": "Reading created. The Location targets a planned user-authorized reading GET; that GET is not implemented yet.",
+            "description": "Reading created. Location targets the implemented user-authorized individual reading GET.",
             "headers": {
               "Location": {
                 "schema": {
@@ -575,16 +575,10 @@
                 "description": "/api/v1.0/installations/{installationId}/readings/{readingId} (configured base path)."
               },
               "ETag": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "Strong validator of the exact public reading JSON."
+                "$ref": "#/components/headers/ReadingETag"
               },
               "Last-Modified": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "HTTP date from receivedAt."
+                "$ref": "#/components/headers/ReadingLastModified"
               },
               "Cache-Control": {
                 "$ref": "#/components/headers/NoStore"
@@ -683,6 +677,2613 @@
           },
           "500": {
             "description": "Unexpected failure (INTERNAL_SERVER_ERROR).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listInstallationReadings",
+        "summary": "Page and filter authorized installation reading history",
+        "description": "Current stored user jurisdiction is checked before readings, count, paging or validators. National analysts/admins read nationally; provincial/district analysts read within assigned ancestry. Inactive installation history remains readable. Count and page are read in one snapshot. Stable sort uses recordedAt and publicId in the same direction, default newest first. Shared read limit is 120/minute per user including conditional requests. ETag covers user context, installation, normalized paging/sort, filters and complete response. No Last-Modified is sent because no reliable revision exists for the collection envelope; If-Modified-Since alone cannot return 304. Denied/error responses contain neither data/counts nor ETag/Last-Modified.",
+        "security": [
+          {
+            "UserBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "installationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "description": "Nonnegative safe integer; offset plus limit must remain a safe integer."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?(?:Z|[+-]\\d{2}:\\d{2})$"
+            },
+            "description": "Inclusive valid calendar ISO timestamp with explicit zone and millisecond precision. Must be before to when both are present."
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?(?:Z|[+-]\\d{2}:\\d{2})$"
+            },
+            "description": "Exclusive valid calendar ISO timestamp with explicit zone and millisecond precision. Percent-encode + as %2B in URLs."
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "timestamp",
+                "-timestamp"
+              ],
+              "default": "-timestamp"
+            },
+            "description": "recordedAt and publicId ascending or descending."
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Matching strong/weak tag, tag in a list, or * returns bodyless 304 only after authorization and read limiting."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized matching readings; an empty result uses count=0, null links and empty items.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "ETag": {
+                "$ref": "#/components/headers/ScopedETag"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadingList"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Complete authorized response unchanged; no body or Content-Type.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "ETag": {
+                "$ref": "#/components/headers/ScopedETag"
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid public installation UUID (INVALID_REQUEST), or invalid/repeated/unsupported query, paging, timestamps, sort or range (INVALID_QUERY).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing/invalid/expired token, installation token, or deleted/invalid user (UNAUTHORIZED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "WWW-Authenticate": {
+                "$ref": "#/components/headers/BearerChallenge"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Installation outside stored jurisdiction (FORBIDDEN).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Installation or its ancestry missing (NOT_FOUND).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "406": {
+            "$ref": "#/components/responses/NotAcceptable"
+          },
+          "429": {
+            "description": "Shared user-read limit exceeded (RATE_LIMIT_EXCEEDED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/LoginRetryAfter"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected persistence failure (INTERNAL_SERVER_ERROR).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/installations/{installationId}/readings/{readingId}": {
+      "get": {
+        "operationId": "getInstallationReading",
+        "summary": "Read an individual installation reading within current user jurisdiction",
+        "description": "Requires user/admin JWT authentication and current stored jurisdiction. Resolve installation, substation, district and province before reading lookup or validators. National analysts/admins read nationally; provincial/district analysts read only within assigned ancestry. Inactive installations retain readable history. Find readings by both installationId and readingId. Existing installations outside current jurisdiction return 403 before reading lookup; missing ancestry/resources and reading/installation mismatches return 404. Shared user-read limit is 120/minute per user, including admins and conditional requests. The exact public JSON and strong ETag match POST; private caching and authorization on each request prevent validators bypassing access.",
+        "security": [
+          {
+            "UserBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "installationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            }
+          },
+          {
+            "name": "readingId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Strong/weak matching tag, quoted tag list, or * returns bodyless 304 after authorization. Takes precedence over If-Modified-Since."
+          },
+          {
+            "name": "If-Modified-Since",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "HTTP date compared with receivedAt at whole-second resolution, used only without If-None-Match. Invalid dates are ignored."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized public reading",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ReadingETag"
+              },
+              "Last-Modified": {
+                "$ref": "#/components/headers/ReadingLastModified"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerationReading"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Authorized reading unchanged; no body or Content-Type",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ReadingETag"
+              },
+              "Last-Modified": {
+                "$ref": "#/components/headers/ReadingLastModified"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid installationId or readingId public UUID (INVALID_REQUEST).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or installation token, or deleted/invalid user (UNAUTHORIZED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "WWW-Authenticate": {
+                "$ref": "#/components/headers/BearerChallenge"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Existing installation outside the current stored analyst jurisdiction (FORBIDDEN). Rejected before reading lookup even if the supplied reading ID is absent.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "FORBIDDEN",
+                  "message": "The installation is outside your permitted jurisdiction.",
+                  "details": []
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Reading not found (NOT_FOUND): missing ancestry/installation/reading or reading belongs to another installation.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "406": {
+            "$ref": "#/components/responses/NotAcceptable"
+          },
+          "429": {
+            "description": "Shared user-read limit exceeded (RATE_LIMIT_EXCEEDED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/LoginRetryAfter"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected persistence failure (INTERNAL_SERVER_ERROR).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readings": {
+      "get": {
+        "operationId": "listRegionalReadings",
+        "summary": "Page and filter reading history within stored jurisdiction",
+        "description": "Current user authentication and shared 120/minute read limit precede scoped reading queries and conditional responses. National analysts/admins read nationally; provincial/district analysts see only their stored area. Include inactive installations. Resolve explicit geography and ancestry: missing resources return 404, outside-jurisdiction filters 403, and contradictory authorized filters 400. Selecting a district analyst's parent province never broadens district scope. Count/page and authorized geography share a snapshot. Reuse recordedAt/publicId sort and public reading fields. Links preserve all filters. ETag covers current principal, effective query and complete response; matching If-None-Match returns bodyless 304 after authorization. Omit unreliable Last-Modified; If-Modified-Since alone returns 200. Errors expose no data/counts or validators.",
+        "security": [
+          {
+            "UserBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "provinceId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "description": "Single public UUID v4. Must exist within current jurisdiction and agree with other geography filters."
+          },
+          {
+            "name": "districtId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "description": "Single public UUID v4. Must exist within current jurisdiction and agree with other geography filters."
+          },
+          {
+            "name": "substationId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "description": "Single public UUID v4. Must exist within current jurisdiction and agree with other geography filters."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "description": "Nonnegative safe integer; offset plus limit must remain a safe integer."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?(?:Z|[+-]\\d{2}:\\d{2})$"
+            },
+            "description": "Inclusive valid calendar ISO timestamp with explicit zone and millisecond precision. Must be before to when both are present."
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?(?:Z|[+-]\\d{2}:\\d{2})$"
+            },
+            "description": "Exclusive valid calendar ISO timestamp with explicit zone and millisecond precision. Percent-encode + as %2B in URLs."
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "timestamp",
+                "-timestamp"
+              ],
+              "default": "-timestamp"
+            },
+            "description": "recordedAt and publicId ascending or descending."
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Matching strong/weak tag, tag in a list, or * returns bodyless 304 only after authorization and read limiting."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized matching readings; an empty result uses count=0, null links and empty items.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "ETag": {
+                "$ref": "#/components/headers/ScopedETag"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadingList"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Complete authorized response unchanged; no body or Content-Type.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "ETag": {
+                "$ref": "#/components/headers/ScopedETag"
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed/repeated/unsupported query, invalid paging/time/sort/public UUID, or contradictory authorized geography (INVALID_QUERY).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing/invalid/expired token, installation token, or deleted/invalid user (UNAUTHORIZED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "WWW-Authenticate": {
+                "$ref": "#/components/headers/BearerChallenge"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "An explicit geography filter is outside stored jurisdiction (FORBIDDEN).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Explicit geography or its ancestry missing (NOT_FOUND).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "406": {
+            "$ref": "#/components/responses/NotAcceptable"
+          },
+          "429": {
+            "description": "Shared user-read limit exceeded (RATE_LIMIT_EXCEEDED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/LoginRetryAfter"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected persistence failure (INTERNAL_SERVER_ERROR).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/installations/{installationId}/last-reading": {
+      "get": {
+        "operationId": "getLastReading",
+        "summary": "Retrieve the latest measurement within the current user jurisdiction",
+        "description": "Require current user authentication (installation tokens return 401), shared 120/minute User read limits, valid installation UUID and complete ancestry authorization before reading lookup or conditional GET. National analysts/admins read nationally; provincial/district analysts within stored jurisdiction; cross-jurisdiction access returns 403 even with empty history. Missing installation/ancestry or no readings returns 404. Include inactive history. Select greatest recordedAt (descending publicId tie-breaker), never greatest receivedAt. Return the existing public reading representation with exact strong ETag, private, no-cache and Last-Modified from the selected immutable receivedAt at whole-second precision. If-None-Match takes precedence; matching conditions return bodyless 304. A delayed older measurement preserves validators; a newer measurement changes ETag. Errors use no-store and omit reading validators.",
+        "security": [
+          {
+            "UserBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "installationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Strong/weak matching tag, quoted tag list, or * returns bodyless 304 after authorization. Takes precedence over If-Modified-Since."
+          },
+          {
+            "name": "If-Modified-Since",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "HTTP date compared with receivedAt at whole-second resolution, used only without If-None-Match. Invalid dates are ignored."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Latest measurement by recordedAt, including inactive history",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ReadingETag"
+              },
+              "Last-Modified": {
+                "$ref": "#/components/headers/ReadingLastModified"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerationReading"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Authorized reading unchanged; no body or Content-Type",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ReadingETag"
+              },
+              "Last-Modified": {
+                "$ref": "#/components/headers/ReadingLastModified"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              }
+            }
+          },
+          "400": {
+            "description": "installationId must be a public UUID.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or installation token, or deleted/invalid user (UNAUTHORIZED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "WWW-Authenticate": {
+                "$ref": "#/components/headers/BearerChallenge"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Existing installation outside the current stored analyst jurisdiction (FORBIDDEN). Rejected before reading lookup even if the supplied reading ID is absent.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "FORBIDDEN",
+                  "message": "The installation is outside your permitted jurisdiction.",
+                  "details": []
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Missing installation or ancestry, or no readings.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "406": {
+            "$ref": "#/components/responses/NotAcceptable"
+          },
+          "429": {
+            "description": "Shared user-read limit exceeded (RATE_LIMIT_EXCEEDED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/LoginRetryAfter"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected persistence failure (INTERNAL_SERVER_ERROR).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/installations/{installationId}/overview": {
+      "get": {
+        "operationId": "getInstallationOverview",
+        "summary": "Retrieve installation details, related geography and latest measurement",
+        "description": "Require current user authentication (installation tokens return 401), shared 120/minute user-read limits and complete installation ancestry authorization before data or validators. National analysts/admins read nationally; provincial/district analysts within stored jurisdiction. Cross-jurisdiction access returns 403, missing installation/ancestry 404. Include inactive installations. Read the complete composite in one snapshot. latestReading selects greatest recordedAt with descending publicId tie-breaker, or null for empty history; no full history. Strong ETag covers the current principal and complete composite, including latest-reading, installation status and geography changes. Private, no-cache; matching If-None-Match returns bodyless 304 after authorization. Omit Last-Modified because no reliable whole-composite revision time exists; If-Modified-Since alone returns 200. Errors use no-store without validators.",
+        "security": [
+          {
+            "UserBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "installationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Strong/weak matching tag, quoted tag list, or * returns bodyless 304 after authorization. Takes precedence over If-Modified-Since."
+          },
+          {
+            "name": "If-Modified-Since",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Ignored because no reliable whole-composite Last-Modified exists; alone returns 200."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Installation overview; latestReading is null for empty history",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ScopedETag"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstallationOverview"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Authorized complete composite unchanged; no body or Content-Type",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ScopedETag"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              }
+            }
+          },
+          "400": {
+            "description": "installationId must be a public UUID.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or installation token, or deleted/invalid user (UNAUTHORIZED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "WWW-Authenticate": {
+                "$ref": "#/components/headers/BearerChallenge"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Installation outside stored jurisdiction (FORBIDDEN), rejected before latest-reading lookup.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "FORBIDDEN",
+                  "message": "The installation is outside your permitted jurisdiction.",
+                  "details": []
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Missing installation or ancestry (NOT_FOUND); empty history instead returns 200.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "NOT_FOUND",
+                  "message": "Installation not found.",
+                  "details": []
+                }
+              }
+            }
+          },
+          "406": {
+            "$ref": "#/components/responses/NotAcceptable"
+          },
+          "429": {
+            "description": "Shared user-read limit exceeded (RATE_LIMIT_EXCEEDED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/LoginRetryAfter"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected persistence failure (INTERNAL_SERVER_ERROR).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/installations/{installationId}": {
+      "get": {
+        "operationId": "getInstallation",
+        "summary": "Retrieve public installation details within the current user jurisdiction",
+        "description": "Require current user authentication (installation tokens return 401), shared 120/minute User read limits, valid public UUID v4 and complete ancestry authorization before data or validators. National analysts/admins read nationally; provincial/district analysts within stored jurisdiction. Cross-jurisdiction access returns 403; missing installation/ancestry 404. Return active/inactive installation metadata only: id, substationId, meterId and status. Strong ETag is the quoted SHA-256 digest of JSON.stringify of public fields in that order, independent of principal identity and suitable for future admin If-Match. Readings, geography names and private metadata do not affect it. Private, no-cache; matching If-None-Match returns bodyless 304 after authorization. No reliable metadata modification time exists, so omit Last-Modified; If-Modified-Since alone returns 200. Errors use no-store without validators. No installation writes implemented.",
+        "security": [
+          {
+            "UserBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "installationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Strong/weak matching tag, quoted tag list, or * returns bodyless 304 after authorization. Takes precedence over If-Modified-Since."
+          },
+          {
+            "name": "If-Modified-Since",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Ignored because no reliable installation metadata Last-Modified exists; alone returns 200."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Public installation details, active or inactive",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/InstallationETag"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SolarInstallation"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Authorized public installation unchanged; no body or Content-Type",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/InstallationETag"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              }
+            }
+          },
+          "400": {
+            "description": "installationId must be a public UUID.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or installation token, or deleted/invalid user (UNAUTHORIZED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "WWW-Authenticate": {
+                "$ref": "#/components/headers/BearerChallenge"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Installation outside stored jurisdiction (FORBIDDEN).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "FORBIDDEN",
+                  "message": "The installation is outside your permitted jurisdiction.",
+                  "details": []
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Missing installation or ancestry (NOT_FOUND).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "NOT_FOUND",
+                  "message": "Installation not found.",
+                  "details": []
+                }
+              }
+            }
+          },
+          "406": {
+            "$ref": "#/components/responses/NotAcceptable"
+          },
+          "429": {
+            "description": "Shared user-read limit exceeded (RATE_LIMIT_EXCEEDED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/LoginRetryAfter"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected persistence failure (INTERNAL_SERVER_ERROR).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/installations": {
+      "get": {
+        "operationId": "listInstallations",
+        "summary": "List public installations within the current user jurisdiction",
+        "description": "Require current user authentication (installation tokens return 401), shared 120/minute user-read limits and authorized geography before installation count/page/validators. National analysts/admins list nationally; provincial/district analysts within stored jurisdiction. Explicit outside-scope geography returns 403; missing geography/ancestry 404; contradictory authorized or invalid filters 400. A district analyst may select their parent province without expanding scope. Accept only geography UUID filters and offset/limit; include active and inactive installations, order by publicId ascending. Empty results return 200 with an empty collection. Read geography/count/page in one snapshot. ETag covers current principal, effective query and complete envelope; private, no-cache. Matching If-None-Match returns bodyless 304 after authorization/rate limiting. No reliable whole-collection Last-Modified exists; If-Modified-Since alone returns 200. Errors use no-store without validators/items/counts. No installation writes implemented.",
+        "security": [
+          {
+            "UserBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "provinceId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "description": "Single public UUID v4. Must exist within current jurisdiction and agree with other geography filters."
+          },
+          {
+            "name": "districtId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "description": "Single public UUID v4. Must exist within current jurisdiction and agree with other geography filters."
+          },
+          {
+            "name": "substationId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "description": "Single public UUID v4. Must exist within current jurisdiction and agree with other geography filters."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "description": "Nonnegative safe integer; offset plus limit must remain a safe integer."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Matching strong/weak tag, tag in a list, or * returns bodyless 304 only after authorization and read limiting."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Scoped installation page including both active and inactive installations",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "ETag": {
+                "$ref": "#/components/headers/ScopedETag"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstallationList"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Complete authorized response unchanged; no body or Content-Type.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "ETag": {
+                "$ref": "#/components/headers/ScopedETag"
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed/repeated/unsupported query, invalid paging/public UUID, or contradictory authorized geography (INVALID_QUERY).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing/invalid/expired token, installation token, or deleted/invalid user (UNAUTHORIZED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "WWW-Authenticate": {
+                "$ref": "#/components/headers/BearerChallenge"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "An explicit geography filter is outside stored jurisdiction (FORBIDDEN).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Explicit geography or its ancestry missing (NOT_FOUND).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "406": {
+            "$ref": "#/components/responses/NotAcceptable"
+          },
+          "429": {
+            "description": "Shared user-read limit exceeded (RATE_LIMIT_EXCEEDED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/LoginRetryAfter"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected persistence failure (INTERNAL_SERVER_ERROR).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/grid-substations/{substationId}": {
+      "get": {
+        "operationId": "getGridSubstation",
+        "summary": "Retrieve public grid substation details within the current user jurisdiction",
+        "description": "Require current user authentication (installation tokens return 401), shared 120/minute User read limits and a public UUID v4 substationId. Invalid format returns 400. Resolve complete substation/district/province ancestry in a read snapshot before data or validators. National analysts/admins read nationally; provincial/district analysts within stored jurisdiction; otherwise 403. Missing substation or ancestry returns 404. Return only id, districtId and name. Strong ETag covers current principal and complete public representation; private, no-cache. Matching If-None-Match returns bodyless 304 after authentication, jurisdiction and rate limiting. No reliable metadata change timestamp exists, so omit Last-Modified; If-Modified-Since alone returns 200. Errors use no-store without validators. No child installation list, filters or unrelated endpoints added.",
+        "security": [
+          {
+            "UserBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "substationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Strong/weak matching tag, quoted tag list, or * returns bodyless 304 after authorization. Takes precedence over If-Modified-Since."
+          },
+          {
+            "name": "If-Modified-Since",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Ignored because no reliable substation metadata Last-Modified exists; alone returns 200."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Public grid substation details",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ScopedETag"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GridSubstation"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Authorized public substation unchanged; no body or Content-Type",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ScopedETag"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              }
+            }
+          },
+          "400": {
+            "description": "substationId must be a public UUID (INVALID_REQUEST).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or installation token, or deleted/invalid user (UNAUTHORIZED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "WWW-Authenticate": {
+                "$ref": "#/components/headers/BearerChallenge"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Substation outside stored jurisdiction (FORBIDDEN).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "FORBIDDEN",
+                  "message": "The substation is outside your permitted jurisdiction.",
+                  "details": []
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Missing substation or ancestry (NOT_FOUND).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "NOT_FOUND",
+                  "message": "Substation not found.",
+                  "details": []
+                }
+              }
+            }
+          },
+          "406": {
+            "$ref": "#/components/responses/NotAcceptable"
+          },
+          "429": {
+            "description": "Shared user-read limit exceeded (RATE_LIMIT_EXCEEDED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/LoginRetryAfter"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected persistence failure (INTERNAL_SERVER_ERROR).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/districts/{districtId}/grid-substations": {
+      "get": {
+        "operationId": "listDistrictGridSubstations",
+        "summary": "List grid substations belonging to an authorized district",
+        "description": "Require current user authentication (installation tokens return 401), shared 120/minute User read limits and a UUID v4 districtId (invalid format 400). Resolve District and Province before substation queries/counts/validators. Missing district/ancestry returns 404. National analysts/admins access nationally; provincial analysts districts in their stored province; district analysts only their assigned district; otherwise 403. Query only URL district substations. Return the full collection without pagination, ordered by name/publicId ascending. No query parameters are accepted; supplied options return 400. Return public id/districtId/name items in count/items envelope; empty authorized districts return 200 with count=0 and empty items. Parent authorization and full list share one read snapshot; count is the list length and pagination fields are omitted. ETag covers current principal, district and complete response; private, no-cache. Matching If-None-Match returns bodyless 304 after access/rate checks. Omit Last-Modified; If-Modified-Since alone returns 200. Errors use no-store without validators/data/counts.",
+        "security": [
+          {
+            "UserBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "districtId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Matching strong/weak tag, tag in a list, or * returns bodyless 304 only after authorization and read limiting."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Complete district-scoped substation collection with count/items only; no pagination fields",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "ETag": {
+                "$ref": "#/components/headers/ScopedETag"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GridSubstationList"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Complete authorized response unchanged; no body or Content-Type.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "ETag": {
+                "$ref": "#/components/headers/ScopedETag"
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid district UUID (INVALID_REQUEST) or unsupported query parameters (INVALID_QUERY).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing/invalid/expired token, installation token, or deleted/invalid user (UNAUTHORIZED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "WWW-Authenticate": {
+                "$ref": "#/components/headers/BearerChallenge"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "District outside stored jurisdiction (FORBIDDEN), before substation queries.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "FORBIDDEN",
+                  "message": "The district is outside your permitted jurisdiction.",
+                  "details": []
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Missing district or province ancestry (NOT_FOUND).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "NOT_FOUND",
+                  "message": "District not found.",
+                  "details": []
+                }
+              }
+            }
+          },
+          "406": {
+            "$ref": "#/components/responses/NotAcceptable"
+          },
+          "429": {
+            "description": "Shared user-read limit exceeded (RATE_LIMIT_EXCEEDED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/LoginRetryAfter"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected persistence failure (INTERNAL_SERVER_ERROR).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/districts/{districtId}": {
+      "get": {
+        "operationId": "getDistrict",
+        "summary": "Retrieve public district details within the current user jurisdiction",
+        "description": "Require current user authentication (installation tokens return 401), shared 120/minute User read limits and UUID v4 districtId (invalid format 400). Resolve District and Province in a read snapshot; missing district or ancestry returns 404. National analysts/admins read nationally; provincial analysts within their stored province; district analysts only their assigned district; otherwise 403. Authorize before data or validators. Return only public id/provinceId/name, without related collections. No query options; supplied parameters return 400 INVALID_QUERY. Strong ETag covers current principal and public representation; private, no-cache. Matching If-None-Match returns bodyless 304 after current access/rate checks. No reliable district metadata Last-Modified exists; omit it and return 200 for If-Modified-Since alone. Errors use no-store without validators.",
+        "security": [
+          {
+            "UserBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "districtId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Strong/weak matching tag, quoted tag list, or * returns bodyless 304 after authorization. Takes precedence over If-Modified-Since."
+          },
+          {
+            "name": "If-Modified-Since",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Ignored because no reliable district metadata Last-Modified exists; alone returns 200."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Public district details",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ScopedETag"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/District"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Authorized public district unchanged; no body or Content-Type",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ScopedETag"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid district UUID (INVALID_REQUEST) or unsupported query parameters (INVALID_QUERY).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or installation token, or deleted/invalid user (UNAUTHORIZED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "WWW-Authenticate": {
+                "$ref": "#/components/headers/BearerChallenge"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "District outside stored jurisdiction (FORBIDDEN).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "FORBIDDEN",
+                  "message": "The district is outside your permitted jurisdiction.",
+                  "details": []
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Missing district or province ancestry (NOT_FOUND).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "NOT_FOUND",
+                  "message": "District not found.",
+                  "details": []
+                }
+              }
+            }
+          },
+          "406": {
+            "$ref": "#/components/responses/NotAcceptable"
+          },
+          "429": {
+            "description": "Shared user-read limit exceeded (RATE_LIMIT_EXCEEDED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/LoginRetryAfter"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected persistence failure (INTERNAL_SERVER_ERROR).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/provinces/{provinceId}/districts": {
+      "get": {
+        "operationId": "listProvinceDistricts",
+        "summary": "List authorized districts belonging to a province",
+        "description": "Require current user authentication (installation tokens return 401), shared 120/minute User read limits and UUID v4 provinceId (invalid format 400). Missing requested province returns 404. National analysts/admins list all districts in the requested province; provincial analysts within assigned province; district analysts may access their own province but receive only their assigned district. Other provinces or broken assigned district ancestry return 403. Authorize before district result queries and filter in MongoDB by requested provinceId plus assigned publicId for district scope. Read parent/list in one snapshot. Return count/items only with public id/provinceId/name, ordered by name/publicId ascending; empty authorized province returns 200. No pagination, sorting or geography query options; supplied parameters return 400. ETag covers current principal, province and complete filtered response; private, no-cache. Matching If-None-Match returns bodyless 304 after current access/rate checks. Omit Last-Modified; If-Modified-Since alone returns 200. Errors use no-store without validators/data/counts.",
+        "security": [
+          {
+            "UserBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "provinceId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Matching strong/weak tag, tag in a list, or * returns bodyless 304 only after authorization and read limiting."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Complete authorized province district collection with count/items only",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "ETag": {
+                "$ref": "#/components/headers/ScopedETag"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DistrictList"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Complete authorized response unchanged; no body or Content-Type.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "ETag": {
+                "$ref": "#/components/headers/ScopedETag"
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid province UUID (INVALID_REQUEST) or unsupported query parameters (INVALID_QUERY).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing/invalid/expired token, installation token, or deleted/invalid user (UNAUTHORIZED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "WWW-Authenticate": {
+                "$ref": "#/components/headers/BearerChallenge"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Requested province outside current stored jurisdiction or broken district assignment ancestry (FORBIDDEN).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "FORBIDDEN",
+                  "message": "The province is outside your permitted jurisdiction.",
+                  "details": []
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Missing requested province (NOT_FOUND).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "NOT_FOUND",
+                  "message": "Province not found.",
+                  "details": []
+                }
+              }
+            }
+          },
+          "406": {
+            "$ref": "#/components/responses/NotAcceptable"
+          },
+          "429": {
+            "description": "Shared user-read limit exceeded (RATE_LIMIT_EXCEEDED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/LoginRetryAfter"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected persistence failure (INTERNAL_SERVER_ERROR).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/provinces/{provinceId}": {
+      "get": {
+        "operationId": "getProvince",
+        "summary": "Retrieve public province details within the current user jurisdiction",
+        "description": "Require current user authentication (installation tokens return 401), shared 120/minute User read limits and public UUID v4 provinceId (invalid format 400). Missing requested province returns 404. National analysts/admins read any province; provincial analysts only their assigned province; district analysts only the province containing their current assigned district. Other provinces or broken assigned district ancestry return 403. Resolve and authorize in a read snapshot before data or validators. Return only id/name, without collections. No query options; supplied parameters return 400 INVALID_QUERY. Strong ETag covers current principal and public representation; private, no-cache. Matching If-None-Match returns bodyless 304 after current access/rate checks. Omit Last-Modified because no reliable province metadata change timestamp exists; If-Modified-Since alone returns 200. Errors use no-store without validators.",
+        "security": [
+          {
+            "UserBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "provinceId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Strong/weak matching tag, quoted tag list, or * returns bodyless 304 after authorization. Takes precedence over If-Modified-Since."
+          },
+          {
+            "name": "If-Modified-Since",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Ignored because no reliable province metadata Last-Modified exists; alone returns 200."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Public province details",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ScopedETag"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Province"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Authorized public province unchanged; no body or Content-Type",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ScopedETag"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid province UUID (INVALID_REQUEST) or unsupported query parameters (INVALID_QUERY).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or installation token, or deleted/invalid user (UNAUTHORIZED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "WWW-Authenticate": {
+                "$ref": "#/components/headers/BearerChallenge"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Province outside stored jurisdiction (FORBIDDEN).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "FORBIDDEN",
+                  "message": "The province is outside your permitted jurisdiction.",
+                  "details": []
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Missing requested province (NOT_FOUND).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "NOT_FOUND",
+                  "message": "Province not found.",
+                  "details": []
+                }
+              }
+            }
+          },
+          "406": {
+            "$ref": "#/components/responses/NotAcceptable"
+          },
+          "429": {
+            "description": "Shared user-read limit exceeded (RATE_LIMIT_EXCEEDED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/LoginRetryAfter"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected persistence failure (INTERNAL_SERVER_ERROR).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/summarize-district-generation": {
+      "get": {
+        "operationId": "summarizeDistrictGeneration",
+        "summary": "Summarize current power and observed daily energy for an authorized district",
+        "description": "Require current user authentication (installation tokens 401) and shared 120/minute User read limits. Accept exactly one required public UUID v4 districtId query parameter and no other options; missing/invalid/repeated parameters return 400. Missing district or ancestry returns 404; authorize national/admin, assigned province or assigned district before aggregate queries or validators. Capture asOf once per request, including transaction retries. Current power sums each active installation latest recordedAt at or before asOf, if within the inclusive 30-minute freshness window; active installations without eligible readings count as stale. Use Asia/Colombo midnight through asOf inclusive for energy. todayEnergyKwh is observed daily energy that may be incomplete: sum nonnegative consecutive counter differences per installation, including inactive history, skipping decreases and resuming from each lower counter. Use an exact midnight baseline if available; otherwise start at the first in-day sample and flag incomplete. No interpolation, extrapolation, pre-midnight baseline or estimation. Fewer than two daily readings, missing midnight baseline or any decrease counts that installation as incomplete once. Empty districts return zero totals/counts. Read ancestry, status and history in one snapshot. ETag covers current principal and complete response including asOf; private, no-cache. The asOf field uses DD Mon YYYY, hh:mm AM/PM (Sri Lanka), while calculations retain full precision. ETag changes when the displayed timestamp or calculated values change, including freshness expiry and midnight without new readings. Matching If-None-Match yields bodyless 304 only after access/rate checks. Omit Last-Modified; If-Modified-Since alone returns 200. Errors are no-store without validators.",
+        "security": [
+          {
+            "UserBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "districtId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Strong/weak matching tag, quoted tag list, or * returns bodyless 304 after authorization. Takes precedence over If-Modified-Since."
+          },
+          {
+            "name": "If-Modified-Since",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Ignored because no reliable change time covers this time-dependent summary; alone returns 200."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Public district summary, with possibly incomplete observed daily energy",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ScopedETag"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DistrictGenerationSummary"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Authorized complete summary including asOf unchanged; no body or Content-Type",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ScopedETag"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              }
+            }
+          },
+          "400": {
+            "description": "Missing, invalid or repeated districtId, or unsupported query parameters (INVALID_QUERY).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or installation token, or deleted/invalid user (UNAUTHORIZED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "WWW-Authenticate": {
+                "$ref": "#/components/headers/BearerChallenge"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "District outside stored jurisdiction (FORBIDDEN).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "FORBIDDEN",
+                  "message": "The district is outside your permitted jurisdiction.",
+                  "details": []
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Missing district or province ancestry (NOT_FOUND).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "NOT_FOUND",
+                  "message": "District not found.",
+                  "details": []
+                }
+              }
+            }
+          },
+          "406": {
+            "$ref": "#/components/responses/NotAcceptable"
+          },
+          "429": {
+            "description": "Shared user-read limit exceeded (RATE_LIMIT_EXCEEDED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/LoginRetryAfter"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected persistence failure (INTERNAL_SERVER_ERROR).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/grid-substations/{substationId}/installations": {
+      "get": {
+        "operationId": "listSubstationInstallations",
+        "summary": "List all public installations connected to an authorized grid substation",
+        "description": "Require current user authentication (installation tokens return 401), shared 120/minute user-read limits and public UUID v4 substationId (invalid path 400). Resolve requested substation and complete ancestry, then authorize national/admin, assigned province or assigned district access before installation queries/counts/validators. Missing substation or ancestry returns 404; outside jurisdiction 403. Return all installations connected to the URL substation, including active and inactive, with public id/substationId/meterId/status. Reuse existing installation-list query logic and serializer, without pagination. Accept no query parameters: offset, limit, geography, sorting and all other options return 400 INVALID_QUERY. Fixed ascending public UUID order. Response has count and items only; no next/previous fields or pagination links. Empty authorized collections return 200 with count=0 and items=[]. Resolve geography/count/results in one snapshot. Strong ETag covers current principal, parent substation and complete response; private, no-cache. Matching If-None-Match returns bodyless 304 after access/rate checks. Omit Last-Modified; If-Modified-Since alone returns 200. Errors use no-store without data/counts/validators.",
+        "security": [
+          {
+            "UserBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "substationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Matching strong/weak tag, tag in a list, or * returns bodyless 304 only after authorization and read limiting."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Complete authorized substation installation collection including active and inactive records",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "ETag": {
+                "$ref": "#/components/headers/ScopedETag"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubstationInstallationList"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Complete authorized response unchanged; no body or Content-Type.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "ETag": {
+                "$ref": "#/components/headers/ScopedETag"
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid substationId public UUID (INVALID_REQUEST) or supplied query parameters (INVALID_QUERY).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing/invalid/expired token, installation token, or deleted/invalid user (UNAUTHORIZED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "WWW-Authenticate": {
+                "$ref": "#/components/headers/BearerChallenge"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Requested substation outside stored jurisdiction (FORBIDDEN).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Missing requested substation or its district/province ancestry (NOT_FOUND).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "406": {
+            "$ref": "#/components/responses/NotAcceptable"
+          },
+          "429": {
+            "description": "Shared user-read limit exceeded (RATE_LIMIT_EXCEEDED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/LoginRetryAfter"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected persistence failure (INTERNAL_SERVER_ERROR).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -835,7 +3436,9 @@
           "receivedAt",
           "powerKw",
           "energyKwh",
-          "voltageV"
+          "voltageV",
+          "recordedAtDisplay",
+          "receivedAtDisplay"
         ],
         "properties": {
           "id": {
@@ -870,6 +3473,18 @@
             "type": "number",
             "minimum": 0,
             "description": "Finite nonnegative JSON number; no upper bound currently defined."
+          },
+          "recordedAtDisplay": {
+            "type": "string",
+            "readOnly": true,
+            "description": "Derived display text in Asia/Colombo, formatted DD Mon YYYY, hh:mm AM/PM (Sri Lanka). Minute precision for display; use the ISO field for exact instants.",
+            "example": "08 Oct 2026, 12:00 PM (Sri Lanka)"
+          },
+          "receivedAtDisplay": {
+            "type": "string",
+            "readOnly": true,
+            "description": "Derived display text in Asia/Colombo, formatted DD Mon YYYY, hh:mm AM/PM (Sri Lanka). Minute precision for display; use the ISO field for exact instants.",
+            "example": "08 Oct 2026, 12:00 PM (Sri Lanka)"
           }
         }
       },
@@ -922,6 +3537,307 @@
             "type": "string",
             "format": "uuid",
             "description": "Authenticated public UUID from the stored principal; equals the JWT sub claim."
+          }
+        }
+      },
+      "ReadingList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "count",
+          "next",
+          "previous",
+          "items"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Matching installation readings before pagination."
+          },
+          "next": {
+            "type": "string",
+            "nullable": true
+          },
+          "previous": {
+            "type": "string",
+            "nullable": true
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GenerationReading"
+            }
+          }
+        }
+      },
+      "InstallationOverview": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "installation",
+          "geography",
+          "latestReading"
+        ],
+        "properties": {
+          "installation": {
+            "$ref": "#/components/schemas/SolarInstallation"
+          },
+          "geography": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "province",
+              "district",
+              "gridSubstation"
+            ],
+            "properties": {
+              "province": {
+                "$ref": "#/components/schemas/Province"
+              },
+              "district": {
+                "$ref": "#/components/schemas/District"
+              },
+              "gridSubstation": {
+                "$ref": "#/components/schemas/GridSubstation"
+              }
+            }
+          },
+          "latestReading": {
+            "type": "object",
+            "nullable": true,
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GenerationReading"
+              }
+            ],
+            "description": "Latest measurement by recordedAt, or null when no readings exist."
+          }
+        }
+      },
+      "SolarInstallation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "substationId",
+          "meterId",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "substationId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "meterId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "inactive"
+            ]
+          }
+        }
+      },
+      "InstallationList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "count",
+          "next",
+          "previous",
+          "items"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Matching authorized installations before pagination."
+          },
+          "next": {
+            "type": "string",
+            "nullable": true
+          },
+          "previous": {
+            "type": "string",
+            "nullable": true
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SolarInstallation"
+            }
+          }
+        }
+      },
+      "GridSubstation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "districtId",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "districtId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "GridSubstationList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "count",
+          "items"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Number of substations returned for the authorized URL district."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GridSubstation"
+            }
+          }
+        }
+      },
+      "District": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "provinceId",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "provinceId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "DistrictList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "count",
+          "items"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Number of authorized districts returned in the requested province."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/District"
+            }
+          }
+        }
+      },
+      "DistrictGenerationSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "districtId",
+          "asOf",
+          "freshInstallationCount",
+          "staleInstallationCount",
+          "currentPowerKw",
+          "todayEnergyKwh",
+          "incompleteEnergyInstallationCount"
+        ],
+        "properties": {
+          "districtId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "asOf": {
+            "type": "string",
+            "description": "Once-captured request time displayed in Asia/Colombo as DD Mon YYYY, hh:mm AM/PM (Sri Lanka). Calculations retain full millisecond precision; display is minute precision.",
+            "example": "08 Oct 2026, 12:00 PM (Sri Lanka)"
+          },
+          "freshInstallationCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Active installations with a latest eligible reading within 30 minutes inclusive."
+          },
+          "staleInstallationCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Other active installations, including those without readings at or before asOf."
+          },
+          "currentPowerKw": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Sum of latest fresh active-installation powerKw."
+          },
+          "todayEnergyKwh": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Observed daily energy that may be incomplete. Sum nonnegative consecutive cumulative-counter differences from local midnight through asOf; no estimation or interpolation. Includes inactive history."
+          },
+          "incompleteEnergyInstallationCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Active or inactive installations with missing midnight baseline, fewer than two daily readings, or counter decreases; each installation counted once."
+          }
+        }
+      },
+      "SubstationInstallationList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "count",
+          "items"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Matching authorized installations before pagination."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SolarInstallation"
+            }
           }
         }
       }
@@ -977,6 +3893,24 @@
           "type": "string"
         },
         "description": "Strong validator of the exact scoped representation and current stored principal."
+      },
+      "ReadingETag": {
+        "schema": {
+          "type": "string"
+        },
+        "description": "Strong validator of the exact public reading JSON, identical to its POST validator."
+      },
+      "ReadingLastModified": {
+        "schema": {
+          "type": "string"
+        },
+        "description": "HTTP date derived from server receivedAt, at whole-second resolution."
+      },
+      "InstallationETag": {
+        "description": "Strong quoted SHA-256 digest of canonical public installation JSON (id, substationId, meterId, status); independent of reader, readings and private metadata. Shared with future admin If-Match operations.",
+        "schema": {
+          "type": "string"
+        }
       }
     },
     "responses": {

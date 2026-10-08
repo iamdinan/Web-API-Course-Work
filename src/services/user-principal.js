@@ -15,4 +15,10 @@ function currentUserPrincipal(user) {
   return Object.freeze(principal);
 }
 
-module.exports = { currentUserPrincipal, publicUuid };
+function jurisdictionAllows(user, provinceId, districtId) {
+  return user.readScope === "national" ||
+    (user.readScope === "province" && user.provinceId === provinceId) ||
+    (user.readScope === "district" && user.districtId === districtId);
+}
+
+module.exports = { currentUserPrincipal, publicUuid, jurisdictionAllows };

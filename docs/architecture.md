@@ -6,7 +6,11 @@ This document defines the target stored data, resource surface, authorization, a
 
 The target Express JSON API uses `/api/v1.0`, with HTTPS terminating at the deployment proxy. Protected requests will pass through JWT verification, authorization, validation, services, and Mongoose before reaching MongoDB Atlas. Public documentation uses the same base path.
 
-`src/config` owns environment/database configuration; routes define relative resource paths, controllers handle HTTP responses, and middleware handles common request behavior. `src/app.js` mounts the configured API prefix; `src/index.js` owns startup/shutdown. Add services for business logic and persistence coordination as features are implemented. Startup awaits MongoDB before listening, initial failure prevents startup, and SIGINT/SIGTERM close both connections. Health remains a liveness check without a database query.
+`src/features` groups auth, readings, provinces, districts, grid-substations, and health by feature. Each feature owns its routes, HTTP controllers, request validation, and applicable business/persistence services. The readings feature also owns its deterministic public serializer. Keep routes thin and validation, HTTP responses, authorization, and persistence as separate responsibilities within the feature. The static health response lives directly in its route because it has no validation, authorization, or business logic. User/device credential validators share one module; shared read/write limit middleware shares one module while keeping each traffic policy separate.
+
+`src/routes/api.routes.js` composes feature routers and serves OpenAPI. `src/middleware` owns shared JWT verification, installation ownership, rate-limit enforcement, and error handling; `src/services` owns shared password/JWT helpers, current-user principal construction, and operational rate counters. `src/utils` owns shared timestamp parsing and HTTP errors; models and configuration remain shared in `src/models` and `src/config`. Feature-specific code should live with its feature; extract helpers when multiple features or setup tools need them.
+
+`src/app.js` mounts the configured API prefix; `src/index.js` owns startup/shutdown. Startup awaits MongoDB before listening, initial failure prevents startup, and SIGINT/SIGTERM close both connections. Health remains a liveness check without a database query.
 
 Meters create readings. SLSEA users read data within their assigned jurisdiction. Admins have national analyst read access and can create installations, update their status to `inactive` using PATCH, and hard-delete installations only when they have no readings. A status update is not deletion.
 
@@ -119,9 +123,17 @@ Prefix every path below with `/api/v1.0`. Each row is one path. “User” means
 ## Read behavior
 
 - Apply jurisdiction and filters in database queries before counting, paging, composing views, or calculating validators. Query parameters, sorting, and list envelopes follow the [HTTP contract](API_DESIGN_RULES.md#resource-and-query-rules). Reject geographic filters with conflicting ancestry.
-- `last-reading` selects the latest measurement. `overview` composes the installation, its geography, and latest reading; see the HTTP contract for the empty latest-reading response.
+- `last-reading` selects the latest measurement by recordedAt, not receivedAt. `overview` composes the installation, its geography, and latest reading; latest-reading alone returns 404 for empty history, while overview returns latestReading=null.
 - `summarize-district-generation?districtId=...` reports `asOf`, fresh/stale installation counts, current power, today's energy, and incomplete-energy count. Use Asia/Colombo day boundaries and a 30-minute freshness threshold. Calculate energy from counter changes with reset/baseline handling, not the sum of cumulative counters.
 - Keep inactive installations and their history visible to users within jurisdiction, including lists, counts, overview, and latest-reading views. District summaries exclude inactive installations from current power and fresh/stale counts, but include their retained readings in today's energy and incomplete-energy calculation. Recompute affected validators after creation, status updates, or hard deletion.
+
+### District generation summary
+
+The implemented GET /summarize-district-generation uses only the required districtId query. Reuse districtAncestry and jurisdictionAllows before querying GridSubstation, SolarInstallation or GenerationReading. Scope substations by districtId, installations by those public substation IDs, and readings by those installation IDs. Use one read-only snapshot for ancestry, installation status and measurements; capture current time once outside retries.
+
+Aggregate latest eligible measurements by installationId with recordedAt descending and publicId descending (receivedAt never determines latest); exclude recordedAt after asOf. Query daily counters within the Asia/Colombo midnight-to-asOf range in deterministic installationId/recordedAt/publicId order. Freshness is 30 minutes inclusive. Sum current power only for fresh active installations; inactive history remains in observed daily energy and incomplete counts.
+
+asOf is readable Asia/Colombo text (`08 Oct 2026, 12:00 PM (Sri Lanka)`); use the shared displayTimestamp formatter while retaining full captured precision for calculations. Public response fields are districtId, asOf, freshInstallationCount, staleInstallationCount, currentPowerKw, todayEnergyKwh and incompleteEnergyInstallationCount. todayEnergyKwh is observed daily energy that may be incomplete: no interpolation, estimates or pre-midnight baseline. Sum nonnegative consecutive daily counter changes, skipping decreases and resuming from each lower counter. Missing midnight baseline, fewer than two daily samples or any decrease marks an installation incomplete once. No installations yields zeros; no readings yields zero energy and an incomplete installation. See [approved rationale](decisions.md#d31---observed-district-generation-summary-approved-2026-10-08) and [HTTP contract](API_DESIGN_RULES.md#district-generation-summary) for exact counting/caching. The district-summary feature owns this endpoint; no domain writes or admin routes are added.
 
 ## Admin installation management
 
@@ -175,6 +187,90 @@ Lifecycle transactions must write the same installation document before evaluati
 `verifyUserJwt` reads a bearer token, verifies the configured HS256 algorithm/signature/issuer/audience and expiry, requires `actor=user`, a public UUID `sub`, and bounded `iat`/`exp`, then fetches the current User by public UUID without credential fields. Invalid tokens, absent users, and invalid stored assignments fail authentication. Database failures fail closed. Attach only the current stored identity/role/scope and applicable jurisdiction as `req.user`; derive admin permissions again from the stored role and ignore authorization claims in the token.
 
 The first protected route is `GET /provinces`. National users/admins have an unrestricted province query; provincial users are constrained to their stored province UUID; district users resolve their assigned district's parent province. Filter district/substation lookups within that same jurisdiction, including preventing access to sibling districts for district users. Query provinces and counts with the resolved public-UUID filter before paging; compose public fields and scoped validators only afterward. Missing geography produces no visible province. The shared user read limit uses the User public UUID, with identical limits for admins and analysts. See the [HTTP rules](API_DESIGN_RULES.md#protected-province-list) for list, query, cache, and rejection behavior.
+
+### Province detail access
+
+`GET /provinces/{provinceId}` resolves the requested Province by public UUID and uses the shared provinceAllows helper. National/admin users read any province; provincial users only their stored province; district users resolve their current assigned district through districtAncestry and may read its parent province only. Broken assignment ancestry fails closed. Province resolution and authorization use one read-only snapshot. Return the existing model's public serialization narrowed to id/name; query no related collections. Missing requested province returns 404; existing provinces outside jurisdiction return 403. No query options. See [HTTP behavior](API_DESIGN_RULES.md#province-details) for conditional GET and caching.
+
+### Province district collection
+
+`GET /provinces/{provinceId}/districts` first resolves the requested Province by public UUID. For district analysts, reuse provinceAllows/districtAncestry to resolve the current stored assigned district and its parent province; deny other provinces or broken assignment ancestry before list queries. Apply the shared jurisdictionAllows comparison for national/provincial/district scope, then query District with provinceId and, for district scope, publicId equal to the assigned district. Province authorization and the complete filtered list use one read-only snapshot.
+
+Project publicId/provinceId/name, order by name/publicId ascending and serialize through the same districtBody allowlist as detail reads. Reuse listBody without pagination for count/items only; count is records.length. No child geography, installations or readings are composed, and no domain writes occur. The districts feature owns the route/service/controller and existing authentication/HTTP helpers. See the [HTTP contract](API_DESIGN_RULES.md#province-districts) for no-query behavior, errors, private scoped ETags and omission of Last-Modified.
+
+### District detail access
+
+`GET /districts/{districtId}` reuses the shared districtAncestry service (also used by substation detail and district substation lists) to resolve District and Province through explicit public projections. Within one read-only snapshot, require complete ancestry and apply jurisdictionAllows: national access unrestricted, provincial access matches provinceId, district access matches the URL districtId. Reject forbidden access before model JSON serialization or validators; missing ancestry fails closed.
+
+Return exactly `{ "id": "<UUID>", "provinceId": "<UUID>", "name": "<district name>" }` through the model public transform and explicit allowlist. No substation/installation/reading queries or domain writes occur. The districts feature owns route/validation/controller/service; the shared ancestry helper lives under src/services. See the [HTTP contract](API_DESIGN_RULES.md#district-details) for errors, private scoped ETags and omission of Last-Modified.
+
+### District substation collection
+
+`GET /districts/{districtId}/grid-substations` resolves the URL District and its Province, then applies jurisdictionAllows before querying GridSubstation. Reuse districtAncestry for complete-parent checks shared with substation detail. In a read-only snapshot, authorize the parent and bind the complete list query to `{ districtId: <URL public UUID> }`. Never query an unscoped substation collection. Project publicId/districtId/name, order by name/publicId ascending and return all records without skip/limit.
+
+The shared substationBody allowlist/model transform returns only id/districtId/name for both detail and list items. Reuse listBody for the unpaginated count/items response: count is records.length, with no next/previous fields. No installation/reading queries or domain writes occur. Empty districts are valid collections; missing ancestry fails closed. The [HTTP contract](API_DESIGN_RULES.md#district-grid-substations) owns errors, the complete collection, scoped full-response ETags and omission of Last-Modified. No query options are accepted.
+
+### Grid substation detail access
+
+`GET /grid-substations/{substationId}` resolves GridSubstation to District to Province by public UUID in a read-only snapshot, using explicit credential-free projections. Validate complete ancestry before applying the shared jurisdictionAllows comparison also used by installation read authorization. National analysts/admins have no regional constraint; provincial scope matches the parent district province and district scope matches the substation district. Missing ancestry fails closed; deny out-of-jurisdiction resources before serialization or validators.
+
+The public representation is exactly `{ "id": "<UUID>", "districtId": "<UUID>", "name": "<substation name>" }`, selected deterministically after the model JSON transform. No installation/reading queries or domain writes occur. The substation feature owns its route, validation, controller and service. The [HTTP contract](API_DESIGN_RULES.md#grid-substation-details) owns responses, private scoped ETags and omission of Last-Modified.
+
+### Individual reading access
+
+The shared `authorizedInstallation` helper resolves the URL installation to its substation, district, and province using public UUID references and credential-free projections. After confirming complete ancestry, provincial scope compares the district's province against the stored User province UUID; district scope compares the substation's district against the stored User district UUID. Out-of-jurisdiction installations are rejected before reading lookup using the HTTP contract. National analysts/admins have no regional constraint. Every ancestor must exist; invalid/missing ancestry fails closed. Installation status does not restrict historical reads.
+
+Only after ancestry authorization, query GenerationReading with both `{ publicId: readingId, installationId }`. Project only reading public fields and serialize through the same deterministic public representation as insertion, independent of BSON field order. The reading serializer derives recordedAtDisplay/receivedAtDisplay in Asia/Colombo for all reading responses; these fields are not stored or added to the model. ISO timestamps remain unchanged. Generate response validators only after access and resource identity are established. The [HTTP contract](API_DESIGN_RULES.md#individual-reading) owns errors, caching, and conditional-request behavior.
+
+### Latest reading access
+
+`GET /installations/{installationId}/last-reading` reuses authorizedInstallation before querying GenerationReading by the installation public UUID. Use descending recordedAt/publicId with findOne and the existing installation history index. No installation status filter or domain writes occur. Missing installation/ancestry or empty history returns no reading; forbidden ancestry is rejected before querying readings. Serialize through readingBody and share individual-reading response/conditional handling after authorization. The [latest-reading HTTP contract](API_DESIGN_RULES.md#latest-reading) owns statuses, caching and receipt-based Last-Modified.
+
+### Installation list
+
+`GET /installations` reuses the regional geography resolver to obtain authorized substation public IDs after resolving explicit filters, their ancestry and stored user scope. Apply `{ substationId: { $in: authorizedSubstationIds } }` to both SolarInstallation count and paged result queries; no unrestricted installation query occurs, even nationally. Include inactive installations and exclude broken implicit ancestry. Explicit missing or forbidden geography uses the shared filter errors.
+
+Resolve geography, count and page in one read-only snapshot. Project only publicId/substationId/meterId/status, sort by publicId ascending, then offset/limit; serialize through installationBody. Reading history is not queried. The shared listBody utility supplies the standard count/next/previous/items envelope and prefix-aware filter-preserving links, also used by reading lists. Query parameters and collection validators belong to the [HTTP contract](API_DESIGN_RULES.md#installation-list). No installation writes are implemented.
+
+### Substation installation collection
+
+`GET /grid-substations/{substationId}/installations` calls the same listInstallations service/controller as GET /installations with a URL parent argument and no pagination query. Resolve/authorize that public substation through the existing regional geography resolver before any SolarInstallation count/find. Both endpoints bind count and results to resolved public substation IDs and reuse projections, ascending publicId order and installationBody. The nested route rejects all query parameters and does not apply skip/limit. Keep active/inactive records. Existing listBody without a query returns count/items only, with no next/previous links. Authorization, count and complete results remain in the same snapshot. Validators include the parent even for identical empty bodies. See the [HTTP contract](API_DESIGN_RULES.md#substation-installation-list); no writes or other resource routes are added.
+
+### Installation details
+
+`GET /installations/{installationId}` returns exactly `{ "id": "<UUID>", "substationId": "<UUID>", "meterId": "<meter identifier>", "status": "active" }`; status may also be inactive. Reuse authorizedInstallation and the read-only snapshot pattern to resolve complete ancestry and current installation metadata coherently. No reading query or domain write occurs. Missing installation/ancestry fails closed; jurisdiction rejection precedes public serialization and validators.
+
+The shared installationBody serializer (also used in overview) selects public fields in id/substationId/meterId/status order after the model JSON transform. installationETag hashes JSON.stringify of those canonical fields using SHA-256 and returns a quoted strong hexadecimal tag. It excludes principal identity, geography names, readings, credentials, internal IDs, version and lock metadata. Future admin PATCH/DELETE preconditions must reuse these helpers with the atomic mutation guarantees above; writes remain unimplemented. No reliable metadata modification timestamp is stored. See the [HTTP contract](API_DESIGN_RULES.md#installation-details).
+
+### Installation overview
+
+`GET /installations/{installationId}/overview` returns this minimal composite (public UUIDs only):
+
+```json
+{
+  "installation": { "id": "<UUID>", "substationId": "<UUID>", "meterId": "<meter identifier>", "status": "active" },
+  "geography": {
+    "province": { "id": "<UUID>", "name": "<province name>" },
+    "district": { "id": "<UUID>", "provinceId": "<UUID>", "name": "<district name>" },
+    "gridSubstation": { "id": "<UUID>", "districtId": "<UUID>", "name": "<substation name>" }
+  },
+  "latestReading": null
+}
+```
+
+latestReading is either the existing public reading representation (including ISO/display timestamps) or null; no full history, counts or pagination are included. Status may be active or inactive. The shared authorizedInstallation resolver returns credential-free installation/ancestry documents after checking current jurisdiction. Reuse their model JSON transforms and explicit public field allowlists for deterministic composite serialization; reuse readingBody for the latest reading. Resolve ancestry and select the latest recordedAt/publicId in one read-only snapshot transaction, without domain writes or a second ancestry lookup. Missing installation or broken ancestry fails closed. The [HTTP contract](API_DESIGN_RULES.md#installation-overview) owns errors, scoped full-response ETags and omission of Last-Modified.
+
+### Installation reading history
+
+The collection and individual GETs reuse installation ancestry authorization and deterministic public reading serialization. `listReadings` uses a read-only snapshot transaction: authorize ancestry, then query the installation/time filter for count and the sorted/offset/limited page in the same session. An ingestion committing between queries cannot make count and page disagree. No model/domain writes occur. The existing descending installation/time/public-ID index supports newest-first traversal and its reverse.
+
+Counts and validators are constructed only after authorization. The whole envelope plus current principal, installation identity and effective query forms the scoped ETag input, following the protected province-list convention. No reliable collection modification time is persisted. See the [HTTP contract](API_DESIGN_RULES.md#installation-reading-history) for query rules, pagination, errors and caching.
+
+### Regional reading history
+
+`GET /readings` shares query validation, pagination, serialization and response validators with installation history. Within the same read-only snapshot, resolve each explicit geography filter and its ancestors, enforce current stored jurisdiction, then reject contradictory authorized filter relationships. Resolve eligible provinces, districts, substations and installation public IDs with credential-free projections and database restrictions. Bind both reading count and page to those installation IDs and the time window; no unscoped reading query is used, including for national reads. Retain inactive installations. Missing implicit ancestry produces an empty eligible area; explicit missing ancestry uses the HTTP error contract.
+
+The regional resolver is separate from the province-list service because explicit inaccessible/missing geography filters have different response policies. See the [regional HTTP contract](API_DESIGN_RULES.md#regional-reading-history) for parameters, precedence, paging and caching.
 
 ## Rate limits
 

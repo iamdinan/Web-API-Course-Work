@@ -1,4 +1,4 @@
-const { publicUuid } = require("../services/user-principal");
+const { publicUuid } = require("../../services/user-principal");
 
 function validateProvinceQuery(req, res, next) {
   const query = req.query;

@@ -1,7 +1,7 @@
-const { SolarInstallation } = require("../models");
-const { verifyPassword } = require("./passwords");
-const { signAccessToken } = require("./access-tokens");
-const { publicUuid } = require("./user-principal");
+const { SolarInstallation } = require("../../models");
+const { verifyPassword } = require("../../services/passwords");
+const { signAccessToken } = require("../../services/access-tokens");
+const { publicUuid } = require("../../services/user-principal");
 
 async function issueDeviceToken(meterId, deviceSecret) {
   const installation = await SolarInstallation.findOne({ meterId })

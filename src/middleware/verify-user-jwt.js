@@ -1,9 +1,11 @@
 const { verifyBearerToken } = require("../services/verify-bearer-token");
 const { User } = require("../models");
 const { currentUserPrincipal } = require("../services/user-principal");
+const { sendError } = require("../utils/http-errors");
 
 function unauthorized(res) {
-  return res.set("WWW-Authenticate", "Bearer").status(401).json({
+  res.set("WWW-Authenticate", "Bearer");
+  return sendError(res, 401, {
     code: "UNAUTHORIZED", message: "A valid user bearer token is required.", details: [],
   });
 }

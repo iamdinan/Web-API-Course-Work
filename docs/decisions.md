@@ -97,11 +97,96 @@ This file records choices, their reasons, and unresolved questions. Concrete sch
 - **Reason:** Authentication alone cannot stop concurrent deactivation/deletion. A shared parent document write serializes ingestion with lifecycle transactions and protects history from orphaning; timestamp uniqueness prevents overwrites.
 - **Validation reason:** Explicit-zone timestamps avoid server-timezone ambiguity; millisecond precision preserves timestamp identity in BSON dates. Measurement ceilings and clock-drift/age bounds require domain decisions before enforcement. Input rules belong to the [HTTP contract](API_DESIGN_RULES.md#device-reading-submission).
 
+## D18 - Individual reading access and validators
+
+- **Choice:** Resolve current user jurisdiction through the complete installation ancestry before a reading lookup bound to both URL UUIDs. Preserve inactive history and distinguish forbidden jurisdiction access from missing resources.
+- **Reason:** A globally unique reading UUID alone does not establish ownership or regional access. Ancestry authorization before representation construction prevents reading data and validator disclosure. Explicit forbidden responses make jurisdiction failures distinguishable from missing-resource failures; they may reveal that the parent installation exists.
+- **Validator reason:** All authorized readers receive the same immutable reading representation, so POST and GET share its strong ETag. Private caching and renewed authorization on every request prevent a cached tag from bypassing changed access.
+
+## D19 - Installation history pagination and caching
+
+- **Choice:** Reuse installation ancestry authorization for reading lists and calculate count/page in one read snapshot. Default to newest-first order using the existing history index.
+- **Reason:** Concurrent ingestion must not produce a count from one dataset and a page from another. Public-ID tie-breaking gives deterministic ordering; a context-aware full-envelope ETag tracks filters, paging, count and current access.
+- **Time validator:** Omit collection Last-Modified without a reliable revision covering the entire response. A page's maximum receivedAt cannot establish when count, membership, links or authorized context changed.
+
+## D20 - Feature-based source organization
+
+- **Choice:** Group routes, controllers, validation, and feature services under `src/features`, while retaining shared models, configuration, authentication helpers, middleware, and utilities outside the features. The central router composes the implemented features.
+- **Reason:** Related endpoint code becomes easier to navigate without merging separate responsibilities. Shared security and persistence helpers retain one implementation; timestamp parsing is independent of POST middleware, and reading serialization has a dedicated owner.
+
+## D21 - Scoped regional reading history
+
+- **Choice:** Resolve authorized installation IDs through complete geography within the same snapshot as count/page; reuse installation-history validation, serialization and pagination. Explicit missing geography returns 404, outside-scope filters return 403, and contradictory authorized filters return 400.
+- **Reason:** Restricting reading queries before counting or paging prevents cross-jurisdiction disclosure. A broad parent filter intersects a district analyst's scope instead of expanding it. Separate filter resolution preserves the existing province-list policy while regional lists provide explicit errors.
+
+## D22 - Latest measurement lookup
+
+- **Choice:** Authorize the installation with the shared ancestry helper, then select the greatest recordedAt using the existing history index. Reuse the public serializer and individual-reading validators, including receipt-based Last-Modified.
+- **Reason:** Delayed delivery must not replace a newer measurement. Retained inactive history remains useful to analysts. A single indexed lookup avoids loading or counting history; renewed access checks precede every conditional response.
+
+## D23 - Installation overview composite
+
+- **Choice:** Use installation, geography (province/district/gridSubstation) and latestReading as the minimal composite. Empty history is latestReading=null. Reuse authorized ancestry and public serializers in one read snapshot.
+- **Reason:** No exact composite fields were previously specified. This structure exposes the existing public domain fields without full history or private metadata, and a snapshot prevents mixed installation/geography/reading states.
+- **Validators:** Cover the authorized principal and complete composite in a strong ETag. Omit Last-Modified because reading receipt time cannot describe installation status or geography changes.
+
+## D24 - Installation detail representation and validator
+
+- **Choice:** Share the four-field installation serializer with overview and hash its canonical public fields into a principal-independent SHA-256 strong ETag. Reuse ancestry authorization in a read snapshot.
+- **Reason:** Future admin preconditions need one representation validator across authorized readers. Changes to history, geography names or private metadata must not invalidate an unchanged installation. Current access checks still precede every conditional response.
+- **Time validator:** Omit Last-Modified because no installation metadata change timestamp is persisted; reading receipt times cannot establish metadata freshness.
+
+## D25 - Scoped installation collection
+
+- **Choice:** Reuse regional geography authorization to restrict installation count/page queries by eligible substations in one snapshot. Accept only the documented geography filters and offset/limit, retain both statuses and use ascending public UUID order.
+- **Reason:** Restricting queries before counting/paging prevents jurisdiction leaks; the same filter policy as regional readings gives explicit missing/forbidden/contradictory responses. No client sort was specified, so fixed UUID ordering makes pagination stable without adding parameters.
+- **Validators:** Hash current principal, effective query and complete list envelope; omit Last-Modified because no reliable whole-collection change timestamp exists.
+
+## D26 - Grid substation detail access
+
+- **Choice:** Resolve complete substation ancestry in a snapshot and share the stored-jurisdiction comparison with installation reads. Expose only id, districtId and name; authorize before scoped response validators.
+- **Reason:** Parent ancestry determines provincial access; district users must not gain access to sibling districts. Explicit projections and public allowlists prevent metadata leakage. No geography modification time is stored, so omit Last-Modified.
+
+## D27 - District substation collection
+
+- **Choice:** Authorize District/Province ancestry before a district-bound full-list query in one snapshot. Reuse substation serialization and collection formatting without pagination; fix ordering to name/public UUID ascending.
+- **Reason:** URL parent authorization prevents sibling-district disclosure, including via counts or conditional responses. Public-ID tie-breaking stabilizes equal-name order without introducing client sort/filter options. The user requested no pagination for this small collection; accept no query parameters and omit paging fields entirely. Empty authorized parents remain valid collections.
+- **Validators:** Include current principal, district identity and full envelope in the strong ETag; omit unreliable collection Last-Modified.
+
+## D28 - District detail access
+
+- **Choice:** Reuse District/Province ancestry resolution and stored-jurisdiction comparison for the district detail GET. Return only id/provinceId/name; accept no query options or related collections.
+- **Reason:** Provincial access depends on the stored parent province, while district users must be restricted to their assigned district. Current access checks precede public representation and conditional validators; no reliable district metadata modification timestamp exists.
+
+## D29 - Province district collection
+
+- **Choice:** Authorize the requested province, then query only districts in that province; additionally restrict district analysts by their stored district UUID. Reuse district serialization and the unpaginated count/items format with fixed name/public UUID order.
+- **Reason:** A district analyst can navigate their parent province without seeing siblings or leaking their count through validators. Current stored ancestry establishes provincial membership; parent/list reads share a snapshot. No query options, pagination fields or unreliable Last-Modified are introduced.
+
+## D30 - Province detail access
+
+- **Choice:** Reuse the province access helper for province detail and province-district collection reads. Resolve district analysts' current stored district ancestry in the same snapshot as the requested province. Return only id/name without collections or query options.
+- **Reason:** Province access depends on current ancestry, not token claims; missing/broken assignments must fail closed before cache validators. A scoped public-response ETag supports conditional reads. Omit Last-Modified because province metadata has no reliable change timestamp.
+
+## D31 - Observed district generation summary (approved 2026-10-08)
+
+- **Choice:** Return districtId, asOf, freshInstallationCount, staleInstallationCount, currentPowerKw, todayEnergyKwh and incompleteEnergyInstallationCount. Capture asOf once per request and retain it across snapshot retries. Current power uses the latest recordedAt at or before asOf for each active installation; the inclusive freshness threshold is 30 minutes. Active installations without eligible readings count as stale. Inactive installations participate only in energy/incompleteness.
+- **Energy:** todayEnergyKwh is observed daily energy that may be incomplete. Use only readings from Asia/Colombo midnight through asOf inclusive. Start from an exact midnight reading when present; otherwise start at the first in-day reading and mark incomplete. Sum nonnegative consecutive counter differences; skip decreases, mark incomplete, then resume differences from the lower observed counter. Never assume a zero reset, use a pre-midnight counter, interpolate or estimate unobserved intervals.
+- **Incomplete:** Count each installation once if it has fewer than two in-day readings, lacks an exact midnight baseline, or has any counter decrease. Keep its usable observed contributions. A valid midnight baseline and subsequent readings without decreases suffice; no sampling-cadence or end-of-day completeness is inferred. Empty districts return all zero totals/counts; installations without readings have zero energy and count as incomplete (and stale if active).
+- **Caching:** ETag covers the authorized complete summary including readable asOf. Time advances can change the representation without ingestion, so reading-only ETags are unsuitable. Use private, no-cache; authorize and apply shared limits before conditional responses. Omit Last-Modified. Equal complete representations may return bodyless 304 within the displayed minute; freshness expiry still changes calculated values at full precision.
+- **Approval:** User approved the proposed field names/calculation rules and explicitly required observed energy without estimation or midnight interpolation. This resolves the earlier pending baseline/reset and response decisions. See the [HTTP contract](API_DESIGN_RULES.md#district-generation-summary).
+
+- **Timestamp display correction:** User requested replacing asOf with readable text, rather than adding a second field. Reuse the existing reading display format: `08 Oct 2026, 12:00 PM (Sri Lanka)`. The internal once-captured time retains millisecond precision for all calculations; ETag tracks the displayed timestamp and complete values.
+
+## D32 - Nested substation installation list
+
+- **Choice:** Extend the existing installation-list service with an optional URL substation parent, reusing geography authorization, count/result queries and public serializer. The nested endpoint returns the complete count/items collection, fixed public UUID order, including active/inactive records. No query options, pagination or next/previous fields.
+- **Reason:** The user requested removing pagination for this small collection (about ten installations per substation). Shared persistence logic keeps scoped counts and snapshots consistent with the top-level list. Explicit parent authorization precedes installation queries and conditional responses. Include parent UUID in validators even for identical empty collections. Top-level GET /installations retains its existing pagination.
+
 ## Pending decisions
 
 | Topic | Decision needed |
 | --- | --- |
 | Measurement validation | Set meter clock-drift and measurement bounds. |
-| Energy counter resets | Finalize reset/baseline behavior for district energy calculations. |
 | Deployment | Choose the deployment provider and HTTPS configuration. |
 | Rate thresholds | Confirm or revise thresholds for remaining traffic classes; user/device token issuance uses 5 attempts/15 minutes and protected user reads use 120/minute, and device ingestion uses the initial 30/minute per installation and IP. |

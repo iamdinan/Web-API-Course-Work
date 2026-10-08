@@ -1,5 +1,5 @@
-const tokens = require("../services/user-tokens.service");
-const limits = require("../services/token-rate-limit.service");
+const tokens = require("./user-tokens.service");
+const limits = require("../../services/token-rate-limit.service");
 
 async function createUserToken(req, res) {
   const { email, password } = req.userCredentials;
