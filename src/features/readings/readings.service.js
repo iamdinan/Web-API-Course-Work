@@ -62,12 +62,12 @@ async function listInstallations(user, query, substationId) {
     // Both routes resolve and authorize geography before any count/page query.
     const substationIds = await regionalSubstationIds(user, substationId ? { ...query, substationId } : query, session);
     const filter = { substationId: { $in: substationIds } };
-    const count = await SolarInstallation.countDocuments(filter).session(session);
+    const count = query ? await SolarInstallation.countDocuments(filter).session(session) : null;
     const recordsQuery = SolarInstallation.find(filter)
       .select("publicId substationId meterId status -_id").session(session).sort({ publicId: 1 });
     if (query) recordsQuery.skip(query.offset).limit(query.limit);
     const records = await recordsQuery;
-    return listBody(count, records.map(installationBody), query,
+    return listBody(count ?? records.length, records.map(installationBody), query,
       substationId ? `/grid-substations/${substationId}/installations` : "/installations",
       substationId ? [] : ["provinceId", "districtId", "substationId"]);
   }, { readConcern: { level: "snapshot" } });

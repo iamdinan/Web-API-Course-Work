@@ -1,5 +1,5 @@
 const { Province, District, GridSubstation } = require("../../models");
-const { apiBaseUrl } = require("../../config/env");
+const { listBody } = require("../../utils/list-response");
 const { publicUuid } = require("../../services/user-principal");
 const mongoose = require("mongoose");
 const { provinceAllows } = require("../../services/province-access");
@@ -66,19 +66,8 @@ async function listProvinces(user, query) {
   const count = filter === null ? 0 : await Province.countDocuments(filter);
   const records = filter === null ? [] : await Province.find(filter).select("publicId name")
     .sort({ name: 1, publicId: 1 }).skip(query.offset).limit(query.limit).lean();
-  function link(offset) {
-    const params = new URLSearchParams();
-    for (const key of ["provinceId", "districtId", "substationId"]) if (query[key]) params.set(key, query[key]);
-    params.set("offset", String(offset));
-    params.set("limit", String(query.limit));
-    return `${apiBaseUrl}/provinces?${params}`;
-  }
-  return {
-    count,
-    next: query.offset + query.limit < count ? link(query.offset + query.limit) : null,
-    previous: query.offset > 0 && count > 0 ? link(Math.max(0, query.offset - query.limit)) : null,
-    items: records.map(record => ({ id: record.publicId, name: record.name })),
-  };
+  return listBody(count, records.map(record => ({ id: record.publicId, name: record.name })),
+    query, "/provinces", ["provinceId", "districtId", "substationId"]);
 }
 
 module.exports = { listProvinces, ProvinceFilterConflict, findProvince, ProvinceAccessError };

@@ -8,7 +8,7 @@ Express serves JSON under `/api/v1.0`; production HTTPS terminates at the deploy
 
 `src/features/` groups auth, provinces, districts, grid-substations, installations, readings, district-summary and health. Keep routes thin; separate validation, authorization, HTTP controllers and business/persistence services. Static health needs only its route. Readings owns public reading serialization; auth shares credential validation. `src/routes/api.routes.js` composes features and serves OpenAPI.
 
-Shared middleware owns JWT/ownership verification, rate enforcement and errors; shared services own passwords/JWTs, current principals, ancestry/access and counters. Utilities own timestamps, list responses and HTTP errors; models/configuration remain shared. Extract helpers when multiple features/setup tools need them.
+Shared middleware owns JWT/ownership verification, rate enforcement and errors; shared services own passwords/JWTs, current principals, ancestry/access and counters. Utilities own timestamps, list responses, HTTP errors, public-path/query rejection and response validators; models/configuration remain shared. Extract helpers when multiple features/setup tools need them.
 
 ## Stored data
 
@@ -194,7 +194,7 @@ Regional geography resolution returns eligible substation UUIDs; bind both Solar
 
 ### Substation installation collection
 
-Reuse listInstallations with an authorized URL substation parent and no pagination query. Bind count/full results to eligible substation UUIDs in the same snapshot; no skip/limit. Reuse installationBody/listBody without paging links; include parent UUID in validators even for equal empty bodies.
+Reuse listInstallations with an authorized URL substation parent and no pagination query. Bind full results to eligible substation UUIDs in the same snapshot and derive count from those records; no separate count query or skip/limit. Reuse installationBody/listBody without paging links; include parent UUID in validators even for equal empty bodies.
 
 ### Installation details
 

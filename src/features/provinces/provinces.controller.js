@@ -1,4 +1,4 @@
-const { createHash } = require("node:crypto");
+const { sendPrivateJson } = require("../../utils/response-validators");
 const provinces = require("./provinces.service");
 const { sendError } = require("../../utils/http-errors");
 
@@ -11,8 +11,7 @@ async function getProvince(req, res) {
     return sendError(res, 403, { code: "FORBIDDEN", message: error.message, details: [] });
   }
   if (!body) return sendError(res, 404, { code: "NOT_FOUND", message: "Province not found.", details: [] });
-  const tag = createHash("sha256").update(JSON.stringify({ user: req.user, body })).digest("hex");
-  return res.set({ "Cache-Control": "private, no-cache", ETag: `"${tag}"` }).json(body);
+  return sendPrivateJson(res, body, { user: req.user, body });
 }
 
 async function getProvinces(req, res) {
@@ -24,8 +23,7 @@ async function getProvinces(req, res) {
     return res.status(400).json({ code: "INVALID_QUERY", message: "Geographic filters have conflicting ancestry.", details: [] });
   }
   // The scoped principal participates in the validator even for identical bodies.
-  const tag = createHash("sha256").update(JSON.stringify({ user: req.user, body })).digest("hex");
-  res.set({ "Cache-Control": "private, no-cache", ETag: `"${tag}"` }).json(body);
+  return sendPrivateJson(res, body, { user: req.user, body });
 }
 
 module.exports = { getProvinces, getProvince };

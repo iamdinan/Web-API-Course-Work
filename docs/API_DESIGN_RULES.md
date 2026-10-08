@@ -34,7 +34,7 @@ Public health GET returns `{ "status": "ok" }` with a stable strong ETag and `Ca
 
 - Use `/api/v1.0`, lowercase hyphenated segments, plural collections and public UUID IDs; nest children under parents. The verb-named district summary is a processing function. GET is safe; readings are append-only. No general update/PUT or user-management routes. Design targets Richardson Level 2.
 - Representations are JSON; honor Accept application/json and */*. Writes with bodies require application/json. Bodyless DELETE needs no Content-Type. Standard parser/negotiation rules apply throughout.
-- Path UUID v4 errors use 400 INVALID_REQUEST; query errors use 400 INVALID_QUERY. Documented query fields are single-valued; reject unknown/repeated fields. Installation write UUIDs must be lowercase. Endpoints explicitly accepting no queries reject supplied options. Installation detail/overview and individual/latest reading routes advertise no query options but do not validate them.
+- Path UUID v4 errors use 400 INVALID_REQUEST; query errors use 400 INVALID_QUERY. Documented query fields are single-valued; reject unknown/repeated fields. Installation write UUIDs must be lowercase. Endpoints explicitly accepting no queries reject supplied options. Installation detail/overview, substation detail and individual/latest reading routes advertise no query options but do not validate them.
 - Paging: offset is a nonnegative safe integer (default 0); limit is 1–200 (default 50); their sum must be safe. Filter before sort/page. Paginated envelopes are `{ "count": 0, "next": null, "previous": null, "items": [] }`; count is all authorized matches before paging. Links preserve filters/effective limit and configured prefix, changing offset. Beyond-end offsets retain count, empty items and next=null. Full nested lists return only count/items, count=items.length. Authorized empty lists return 200.
 - History uses from inclusive/to exclusive and requires from < to when both exist; timestamps follow [submission validation](#device-reading-submission). Encode positive-offset `+` as `%2B`. sort=timestamp|-timestamp (default -timestamp) orders recordedAt/publicId in the same direction. Geography filters are provinceId/districtId/substationId UUID v4 strings.
 
@@ -110,7 +110,7 @@ GET `/districts/{districtId}/grid-substations`: full count/items, no queries/pag
 
 ## Grid substation details
 
-GET `/grid-substations/{substationId}`: only id/districtId/name, no queries/related collections; shared substation access/cache rules.
+GET `/grid-substations/{substationId}`: only id/districtId/name without related collections; shared substation access/cache rules. No query options are advertised; supplied queries are ignored by the current route.
 
 ## Individual reading
 

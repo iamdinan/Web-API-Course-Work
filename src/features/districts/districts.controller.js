@@ -1,4 +1,4 @@
-const { createHash } = require("node:crypto");
+const { sendPrivateJson } = require("../../utils/response-validators");
 const districts = require("./districts.service");
 const { sendError } = require("../../utils/http-errors");
 
@@ -11,9 +11,8 @@ async function getDistrict(req, res) {
     return sendError(res, 403, { code: "FORBIDDEN", message: error.message, details: [] });
   }
   if (!body) return sendError(res, 404, { code: "NOT_FOUND", message: "District not found.", details: [] });
-  const tag = createHash("sha256").update(JSON.stringify({ user: req.user, body })).digest("hex");
   // Access precedes Express freshness handling; no reliable metadata change time exists.
-  return res.set({ "Cache-Control": "private, no-cache", ETag: `"${tag}"` }).json(body);
+  return sendPrivateJson(res, body, { user: req.user, body });
 }
 
 async function getProvinceDistricts(req, res) {
@@ -25,8 +24,7 @@ async function getProvinceDistricts(req, res) {
     return sendError(res, 403, { code: "FORBIDDEN", message: error.message, details: [] });
   }
   if (!body) return sendError(res, 404, { code: "NOT_FOUND", message: "Province not found.", details: [] });
-  const tag = createHash("sha256").update(JSON.stringify({ user: req.user, provinceId: req.params.provinceId, body })).digest("hex");
-  return res.set({ "Cache-Control": "private, no-cache", ETag: `"${tag}"` }).json(body);
+  return sendPrivateJson(res, body, { user: req.user, provinceId: req.params.provinceId, body });
 }
 
 module.exports = { getDistrict, getProvinceDistricts };

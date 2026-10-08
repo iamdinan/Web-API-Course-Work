@@ -5,12 +5,13 @@ const { readingRequest } = require("./reading-request");
 const { deviceWriteLimit, userReadLimit } = require("../../middleware/rate-limits");
 const { postReading, getReading, getLastReading, getReadings, getOverview, getInstallation, getInstallations } = require("./readings.controller");
 const { verifyUserJwt } = require("../../middleware/verify-user-jwt");
-const { validateReadingPath, validateInstallationPath, validateSubstationPath } = require("./reading-path");
-const { validateReadingQuery, validateRegionalReadingQuery, validateInstallationQuery, validateSubstationInstallationQuery } = require("./reading-query");
+const { validatePublicPath, rejectQueryParameters } = require("../../utils/public-request");
+const validateInstallationPath = validatePublicPath("installationId");
+const { validateReadingQuery, validateRegionalReadingQuery, validateInstallationQuery } = require("./reading-query");
 
 router.get("/readings", verifyUserJwt, userReadLimit, validateRegionalReadingQuery, getReadings);
 router.get("/installations", verifyUserJwt, userReadLimit, validateInstallationQuery, getInstallations);
-router.get("/grid-substations/:substationId/installations", verifyUserJwt, userReadLimit, validateSubstationPath, validateSubstationInstallationQuery, getInstallations);
+router.get("/grid-substations/:substationId/installations", verifyUserJwt, userReadLimit, validatePublicPath("substationId"), rejectQueryParameters, getInstallations);
 router.get("/installations/:installationId", verifyUserJwt, userReadLimit, validateInstallationPath, getInstallation);
 router.get("/installations/:installationId/last-reading", verifyUserJwt, userReadLimit, validateInstallationPath, getLastReading);
 router.get("/installations/:installationId/overview", verifyUserJwt, userReadLimit, validateInstallationPath, getOverview);
@@ -19,5 +20,5 @@ router.get("/installations/:installationId/readings", verifyUserJwt, userReadLim
 router.get("/installations/:installationId/readings/:readingId", (req, res, next) => {
   res.set("Cache-Control", "no-store");
   next();
-}, verifyUserJwt, userReadLimit, validateReadingPath, getReading);
+}, verifyUserJwt, userReadLimit, validatePublicPath("installationId", "readingId"), getReading);
 module.exports = router;

@@ -2490,7 +2490,8 @@ integration("nested installation collection shares read limits and sanitizes per
   const limited=await substationInstallations(access,station.publicId,"",{ "If-None-Match":"*" });
   assert.equal(limited.status,429); assert.ok(Number(limited.headers["retry-after"])>0); assert.equal(limited.headers.etag,undefined);
   const { access:another }=await analyst();
-  t.mock.method(models.SolarInstallation,"countDocuments",()=>{ throw Error("private diagnostics"); });
+  // The full list derives its count from records; fail the actual collection read.
+  t.mock.method(models.SolarInstallation,"find",()=>{ throw Error("private diagnostics"); });
   const failed=await substationInstallations(another,station.publicId);
   assert.equal(failed.status,500); assert.equal(failed.body.code,"INTERNAL_SERVER_ERROR"); assert.equal(failed.headers.etag,undefined); assert.equal(failed.headers["cache-control"],"no-store");
 });

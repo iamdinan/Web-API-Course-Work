@@ -65,4 +65,4 @@ async function summarizeDistrict(user, districtId, asOf) {
   }, { readConcern: { level: "snapshot" } });
 }
 
-module.exports = { summarizeDistrict, SummaryAccessError, observedEnergy };
+module.exports = { summarizeDistrict, SummaryAccessError };

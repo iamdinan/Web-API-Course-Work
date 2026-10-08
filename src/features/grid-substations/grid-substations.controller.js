@@ -1,4 +1,4 @@
-const { createHash } = require("node:crypto");
+const { sendPrivateJson } = require("../../utils/response-validators");
 const substations = require("./grid-substations.service");
 const { sendError } = require("../../utils/http-errors");
 
@@ -11,9 +11,8 @@ async function getSubstation(req, res) {
     return sendError(res, 403, { code: "FORBIDDEN", message: error.message, details: [] });
   }
   if (!body) return sendError(res, 404, { code: "NOT_FOUND", message: "Substation not found.", details: [] });
-  const tag = createHash("sha256").update(JSON.stringify({ user: req.user, body })).digest("hex");
   // Express evaluates freshness after current access checks; no reliable change time exists.
-  return res.set({ "Cache-Control": "private, no-cache", ETag: `"${tag}"` }).json(body);
+  return sendPrivateJson(res, body, { user: req.user, body });
 }
 
 async function getDistrictSubstations(req, res) {
@@ -25,10 +24,9 @@ async function getDistrictSubstations(req, res) {
     return sendError(res, 403, { code: "FORBIDDEN", message: error.message, details: [] });
   }
   if (!body) return sendError(res, 404, { code: "NOT_FOUND", message: "District not found.", details: [] });
-  const tag = createHash("sha256").update(JSON.stringify({
+  return sendPrivateJson(res, body, {
     user: req.user, districtId: req.params.districtId, body,
-  })).digest("hex");
-  return res.set({ "Cache-Control": "private, no-cache", ETag: `"${tag}"` }).json(body);
+  });
 }
 
 module.exports = { getSubstation, getDistrictSubstations };

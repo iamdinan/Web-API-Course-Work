@@ -1,11 +1,10 @@
 const mongoose = require("mongoose");
 const { randomUUID } = require("node:crypto");
 const { colomboTimestamp } = require("../utils/timestamps");
-
-const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const { publicUuid } = require("../services/user-principal");
 
 function uuidField(options = {}) {
-  return { type: String, required: true, match: uuidPattern, ...options };
+  return { type: String, required: true, match: publicUuid, ...options };
 }
 
 function parentField(modelName, options = {}) {
