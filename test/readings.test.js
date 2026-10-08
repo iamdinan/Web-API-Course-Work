@@ -870,3 +870,138 @@ integration("regional list uses a single snapshot and fails closed on broken anc
   assert.equal(failed.headers.etag, undefined);
   assert.ok(!failed.text.includes("private diagnostics"));
 });
+
+function lastReading(access, id = installationId, headers = {}) {
+  return rawGet(`/installations/${id}/last-reading`, access, headers);
+}
+
+integration("last-reading selects recordedAt over receivedAt, shares public representation and permits every scope on inactive sites", async () => {
+  const records = await history(2);
+  await models.GenerationReading.create({ installationId, recordedAt: new Date("2026-10-07T00:00:00Z"),
+    receivedAt: new Date("2026-10-09T00:00:00Z"), powerKw: 99, energyKwh: 99, voltageV: 230 });
+  const district = await models.District.findOne({});
+  await models.SolarInstallation.updateOne({ publicId: installationId }, { $set: { status: "inactive" } });
+  for (const fields of [{}, { role: "admin" }, { readScope: "province", provinceId: district.provinceId },
+    { readScope: "district", districtId: district.publicId }]) {
+    const { access } = await analyst(fields);
+    const response = await lastReading(access);
+    const individual = await read(records[1].publicId, access);
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body, individual.body);
+    assert.equal(response.headers.etag, individual.headers.etag);
+    assert.equal(response.headers["last-modified"], records[1].receivedAt.toUTCString());
+    assert.equal(response.headers["cache-control"], "private, no-cache");
+  }
+});
+
+integration("last-reading rejects wrong actors, invalid UUIDs, missing installations, empty history and broken ancestry before validators", async () => {
+  for (const access of [null, "invalid", token(), token({ actor: "user" }, { expiresIn: -1 })]) {
+    const response = await lastReading(access, installationId, { "If-None-Match": "*" });
+    assert.equal(response.status, 401);
+    assert.equal(response.headers["www-authenticate"], "Bearer");
+    assert.equal(response.headers.etag, undefined);
+    assert.equal(response.headers["last-modified"], undefined);
+    assert.equal(response.headers["cache-control"], "no-store");
+  }
+  const { access } = await analyst();
+  assert.equal((await lastReading(access, "invalid")).status, 400);
+  for (const id of [installationId, randomUUID()]) {
+    const response = await lastReading(access, id, { "If-None-Match": "*" });
+    assert.equal(response.status, 404);
+    assert.deepEqual(response.body, { code: "NOT_FOUND", message: "Reading not found.", details: [] });
+    assert.equal(response.headers.etag, undefined);
+  }
+  await history(1);
+  await models.Province.collection.deleteMany({});
+  assert.equal((await lastReading(access, installationId, { "If-None-Match": "*" })).status, 404);
+});
+
+integration("last-reading forbids foreign provinces and sibling districts before querying even empty history", async t => {
+  const local = await models.District.findOne({});
+  const foreign = await models.Province.create({ name: "Foreign" });
+  const sibling = await models.District.create({ name: "Sibling", provinceId: local.provinceId });
+  t.mock.method(models.GenerationReading, "findOne", () => { throw new Error("Reading query must not run"); });
+  for (const fields of [{ readScope: "province", provinceId: foreign.publicId },
+    { readScope: "district", districtId: sibling.publicId }]) {
+    const { access } = await analyst(fields);
+    const response = await lastReading(access, installationId, { "If-None-Match": "*" });
+    assert.equal(response.status, 403);
+    assert.equal(response.body.code, "FORBIDDEN");
+    assert.equal(response.headers.etag, undefined);
+    assert.equal(response.headers["last-modified"], undefined);
+    assert.equal(response.headers["cache-control"], "no-store");
+  }
+});
+
+integration("last-reading conditional GET is bodyless, honors precedence and changes only for newer measurements", async () => {
+  await history(1);
+  const { access } = await analyst();
+  const current = await lastReading(access);
+  const tag = current.headers.etag;
+  const modified = current.headers["last-modified"];
+  const earlier = new Date(Date.parse(modified) - 1000).toUTCString();
+  const future = new Date(Date.parse(modified) + 60000).toUTCString();
+  for (const [headers, status] of [
+    [{ "If-None-Match": tag }, 304], [{ "If-None-Match": `W/${tag}` }, 304],
+    [{ "If-None-Match": `"other", ${tag}` }, 304], [{ "If-None-Match": "*" }, 304],
+    [{ "If-Modified-Since": modified }, 304], [{ "If-Modified-Since": future }, 304],
+    [{ "If-Modified-Since": earlier }, 200], [{ "If-Modified-Since": "invalid" }, 200],
+    [{ "If-None-Match": tag, "If-Modified-Since": earlier }, 304],
+    [{ "If-None-Match": '"other"', "If-Modified-Since": future }, 200],
+  ]) {
+    const response = await lastReading(access, installationId, headers);
+    assert.equal(response.status, status);
+    assert.equal(response.headers.etag, tag);
+    assert.equal(response.headers["last-modified"], modified);
+    if (status === 304) {
+      assert.equal(response.text, "");
+      assert.equal(response.headers["content-type"], undefined);
+    }
+  }
+  await models.GenerationReading.create({ installationId, recordedAt: new Date("2026-10-07T00:00:00Z"),
+    receivedAt: new Date("2026-10-09T00:00:00Z"), powerKw: 4, energyKwh: 8, voltageV: 230 });
+  assert.equal((await lastReading(access, installationId, { "If-None-Match": tag })).status, 304);
+  const newer = await models.GenerationReading.create({ installationId, recordedAt: new Date("2026-10-08T01:00:00Z"),
+    receivedAt: new Date("2026-10-09T01:00:00Z"), powerKw: 5, energyKwh: 10, voltageV: 230 });
+  const changed = await lastReading(access, installationId, { "If-None-Match": tag });
+  assert.equal(changed.status, 200);
+  assert.equal(changed.body.id, newer.publicId);
+  assert.notEqual(changed.headers.etag, tag);
+});
+
+integration("last-reading reloads stored access and shares user limits before 304; persistence errors are sanitized", async t => {
+  await history(1);
+  const { user, access } = await analyst();
+  const tag = (await lastReading(access)).headers.etag;
+  const foreign = await models.Province.create({ name: "New assignment" });
+  await models.User.updateOne({ publicId: user.publicId }, { $set: { readScope: "province", provinceId: foreign.publicId } });
+  assert.equal((await lastReading(access, installationId, { "If-None-Match": tag })).status, 403);
+  const { user: admin, access: adminAccess } = await analyst({ role: "admin" });
+  const { createHash } = require("node:crypto");
+  await Counter.create({ _id: `user-read:${createHash("sha256").update(admin.publicId).digest("hex")}`,
+    count: 119, expiresAt: new Date(Date.now() + 60000) });
+  assert.equal((await list(adminAccess)).status, 200);
+  const limited = await lastReading(adminAccess, installationId, { "If-None-Match": tag });
+  assert.equal(limited.status, 429);
+  assert.ok(Number(limited.headers["retry-after"]) > 0);
+  assert.equal(limited.headers.etag, undefined);
+  assert.equal(limited.headers["last-modified"], undefined);
+  const { access: otherAccess } = await analyst();
+  t.mock.method(models.GenerationReading, "findOne", () => { throw new Error("private diagnostics"); });
+  const failed = await lastReading(otherAccess);
+  assert.equal(failed.status, 500);
+  assert.deepEqual(failed.body, { code: "INTERNAL_SERVER_ERROR", message: "An unexpected error occurred.", details: [] });
+  assert.equal(failed.headers["cache-control"], "no-store");
+  assert.equal(failed.headers.etag, undefined);
+});
+
+test("OpenAPI last-reading uses user security, public reading schema and bodyless conditional responses", () => {
+  const spec = require("../docs/openapi.json");
+  const operation = spec.paths["/installations/{installationId}/last-reading"].get;
+  assert.deepEqual(operation.security, [{ UserBearer: [] }]);
+  assert.deepEqual(operation.parameters.filter(p => p.in === "path").map(p => p.name), ["installationId"]);
+  for (const status of [200, 304, 400, 401, 403, 404, 406, 429, 500]) assert.ok(operation.responses[status]);
+  assert.equal(operation.responses[200].content["application/json"].schema.$ref, "#/components/schemas/GenerationReading");
+  assert.equal(operation.responses[304].content, undefined);
+  for (const status of [200, 304]) for (const name of ["ETag", "Last-Modified", "Cache-Control"]) assert.ok(operation.responses[status].headers[name]);
+});

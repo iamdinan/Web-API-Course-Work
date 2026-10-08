@@ -13,8 +13,8 @@ app.use(apiBaseUrl, (req, res, next) => {
   if (req.method === 'POST' && /^\/installations\/[^/]+\/readings\/?$/i.test(req.path)) {
     res.set('Cache-Control', 'no-store');
   }
-  if (req.method === 'GET' && (/^\/installations\/[^/]+\/readings\/?$/i.test(req.path) || /^\/readings\/?$/i.test(req.path))) {
-    // Include negotiation/parser failures that happen before the collection route.
+  if (req.method === 'GET' && (/^\/installations\/[^/]+\/(readings|last-reading)\/?$/i.test(req.path) || /^\/readings\/?$/i.test(req.path))) {
+    // Include negotiation/parser failures that happen before the protected route.
     res.set('Cache-Control', 'no-store');
     res.locals.omitErrorValidators = true;
   }

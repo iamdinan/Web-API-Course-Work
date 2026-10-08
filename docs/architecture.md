@@ -123,7 +123,7 @@ Prefix every path below with `/api/v1.0`. Each row is one path. “User” means
 ## Read behavior
 
 - Apply jurisdiction and filters in database queries before counting, paging, composing views, or calculating validators. Query parameters, sorting, and list envelopes follow the [HTTP contract](API_DESIGN_RULES.md#resource-and-query-rules). Reject geographic filters with conflicting ancestry.
-- `last-reading` selects the latest measurement. `overview` composes the installation, its geography, and latest reading; see the HTTP contract for the empty latest-reading response.
+- `last-reading` selects the latest measurement by recordedAt, not receivedAt. `overview` composes the installation, its geography, and latest reading; see the HTTP contract for the empty latest-reading response.
 - `summarize-district-generation?districtId=...` reports `asOf`, fresh/stale installation counts, current power, today's energy, and incomplete-energy count. Use Asia/Colombo day boundaries and a 30-minute freshness threshold. Calculate energy from counter changes with reset/baseline handling, not the sum of cumulative counters.
 - Keep inactive installations and their history visible to users within jurisdiction, including lists, counts, overview, and latest-reading views. District summaries exclude inactive installations from current power and fresh/stale counts, but include their retained readings in today's energy and incomplete-energy calculation. Recompute affected validators after creation, status updates, or hard deletion.
 
@@ -185,6 +185,10 @@ The first protected route is `GET /provinces`. National users/admins have an unr
 The shared `authorizedInstallation` helper resolves the URL installation to its substation, district, and province using public UUID references and credential-free projections. After confirming complete ancestry, provincial scope compares the district's province against the stored User province UUID; district scope compares the substation's district against the stored User district UUID. Out-of-jurisdiction installations are rejected before reading lookup using the HTTP contract. National analysts/admins have no regional constraint. Every ancestor must exist; invalid/missing ancestry fails closed. Installation status does not restrict historical reads.
 
 Only after ancestry authorization, query GenerationReading with both `{ publicId: readingId, installationId }`. Project only reading public fields and serialize through the same deterministic public representation as insertion, independent of BSON field order. The reading serializer derives recordedAtDisplay/receivedAtDisplay in Asia/Colombo for all reading responses; these fields are not stored or added to the model. ISO timestamps remain unchanged. Generate response validators only after access and resource identity are established. The [HTTP contract](API_DESIGN_RULES.md#individual-reading) owns errors, caching, and conditional-request behavior.
+
+### Latest reading access
+
+`GET /installations/{installationId}/last-reading` reuses authorizedInstallation before querying GenerationReading by the installation public UUID. Use descending recordedAt/publicId with findOne and the existing installation history index. No installation status filter or domain writes occur. Missing installation/ancestry or empty history returns no reading; forbidden ancestry is rejected before querying readings. Serialize through readingBody and share individual-reading response/conditional handling after authorization. The [latest-reading HTTP contract](API_DESIGN_RULES.md#latest-reading) owns statuses, caching and receipt-based Last-Modified.
 
 ### Installation reading history
 

@@ -32,6 +32,13 @@ async function findReading(user, installationId, readingId) {
   return reading ? readingBody(reading) : null;
 }
 
+async function findLastReading(user, installationId) {
+  if (!await authorizedInstallation(user, installationId)) return null;
+  const reading = await GenerationReading.findOne({ installationId })
+    .select(readingFields).sort({ recordedAt: -1, publicId: -1 });
+  return reading ? readingBody(reading) : null;
+}
+
 async function listReadings(user, installationId, query) {
   // A single read snapshot keeps the authorized ancestry, count and page coherent
   // when an ingestion commits between the count and page queries.
@@ -119,4 +126,4 @@ async function createReading(installationId, input) {
   }
 }
 
-module.exports = { createReading, findReading, listReadings, listRegionalReadings, ReadingFilterError, ReadingWriteError, ReadingAccessError };
+module.exports = { createReading, findReading, findLastReading, listReadings, listRegionalReadings, ReadingFilterError, ReadingWriteError, ReadingAccessError };

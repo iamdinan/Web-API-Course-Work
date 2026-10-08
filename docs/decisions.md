@@ -119,6 +119,11 @@ This file records choices, their reasons, and unresolved questions. Concrete sch
 - **Choice:** Resolve authorized installation IDs through complete geography within the same snapshot as count/page; reuse installation-history validation, serialization and pagination. Explicit missing geography returns 404, outside-scope filters return 403, and contradictory authorized filters return 400.
 - **Reason:** Restricting reading queries before counting or paging prevents cross-jurisdiction disclosure. A broad parent filter intersects a district analyst's scope instead of expanding it. Separate filter resolution preserves the existing province-list policy while regional lists provide explicit errors.
 
+## D22 - Latest measurement lookup
+
+- **Choice:** Authorize the installation with the shared ancestry helper, then select the greatest recordedAt using the existing history index. Reuse the public serializer and individual-reading validators, including receipt-based Last-Modified.
+- **Reason:** Delayed delivery must not replace a newer measurement. Retained inactive history remains useful to analysts. A single indexed lookup avoids loading or counting history; renewed access checks precede every conditional response.
+
 ## Pending decisions
 
 | Topic | Decision needed |

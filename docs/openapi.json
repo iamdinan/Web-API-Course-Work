@@ -1325,6 +1325,187 @@
           }
         }
       }
+    },
+    "/installations/{installationId}/last-reading": {
+      "get": {
+        "operationId": "getLastReading",
+        "summary": "Retrieve the latest measurement within the current user jurisdiction",
+        "description": "Require current user authentication (installation tokens return 401), shared 120/minute User read limits, valid installation UUID and complete ancestry authorization before reading lookup or conditional GET. National analysts/admins read nationally; provincial/district analysts within stored jurisdiction; cross-jurisdiction access returns 403 even with empty history. Missing installation/ancestry or no readings returns 404. Include inactive history. Select greatest recordedAt (descending publicId tie-breaker), never greatest receivedAt. Return the existing public reading representation with exact strong ETag, private, no-cache and Last-Modified from the selected immutable receivedAt at whole-second precision. If-None-Match takes precedence; matching conditions return bodyless 304. A delayed older measurement preserves validators; a newer measurement changes ETag. Errors use no-store and omit reading validators.",
+        "security": [
+          {
+            "UserBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "installationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Strong/weak matching tag, quoted tag list, or * returns bodyless 304 after authorization. Takes precedence over If-Modified-Since."
+          },
+          {
+            "name": "If-Modified-Since",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "HTTP date compared with receivedAt at whole-second resolution, used only without If-None-Match. Invalid dates are ignored."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Latest measurement by recordedAt, including inactive history",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ReadingETag"
+              },
+              "Last-Modified": {
+                "$ref": "#/components/headers/ReadingLastModified"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerationReading"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Authorized reading unchanged; no body or Content-Type",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ReadingETag"
+              },
+              "Last-Modified": {
+                "$ref": "#/components/headers/ReadingLastModified"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              }
+            }
+          },
+          "400": {
+            "description": "installationId must be a public UUID.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or installation token, or deleted/invalid user (UNAUTHORIZED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "WWW-Authenticate": {
+                "$ref": "#/components/headers/BearerChallenge"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Existing installation outside the current stored analyst jurisdiction (FORBIDDEN). Rejected before reading lookup even if the supplied reading ID is absent.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "FORBIDDEN",
+                  "message": "The installation is outside your permitted jurisdiction.",
+                  "details": []
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Missing installation or ancestry, or no readings.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "406": {
+            "$ref": "#/components/responses/NotAcceptable"
+          },
+          "429": {
+            "description": "Shared user-read limit exceeded (RATE_LIMIT_EXCEEDED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/LoginRetryAfter"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected persistence failure (INTERNAL_SERVER_ERROR).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {

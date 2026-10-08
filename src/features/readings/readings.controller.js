@@ -19,15 +19,23 @@ async function postReading(req, res) {
 }
 
 async function getReading(req, res) {
+  return sendReading(req, res, readings.findReading);
+}
+
+async function getLastReading(req, res) {
+  return sendReading(req, res, readings.findLastReading);
+}
+
+async function sendReading(req, res, find) {
   let body;
   try {
-    body = await readings.findReading(req.user, req.params.installationId, req.params.readingId);
+    body = await find(req.user, req.params.installationId, req.params.readingId);
   } catch (error) {
     if (!(error instanceof readings.ReadingAccessError)) throw error;
-    return res.status(403).json({ code: "FORBIDDEN", message: error.message, details: [] });
+    return sendError(res, 403, { code: "FORBIDDEN", message: error.message, details: [] });
   }
   if (!body) {
-    return res.status(404).json({ code: "NOT_FOUND", message: "Reading not found.", details: [] });
+    return sendError(res, 404, { code: "NOT_FOUND", message: "Reading not found.", details: [] });
   }
   // Express generates the same strong ETag as POST and evaluates freshness only
   // after current authentication, rate limiting, jurisdiction and identity checks.
@@ -59,4 +67,4 @@ async function getReadings(req, res) {
   return res.set({ "Cache-Control": "private, no-cache", ETag: `"${tag}"` }).json(body);
 }
 
-module.exports = { postReading, getReading, getReadings };
+module.exports = { postReading, getReading, getLastReading, getReadings };
