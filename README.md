@@ -6,7 +6,7 @@ A Node.js/Express API backed by Mongoose and MongoDB Atlas for solar generation 
 
 ## Current implementation
 
-The application currently provides public `/health` and `/openapi.json`, user/admin login at `POST /auth/user-tokens`, device login at `POST /auth/device-tokens`, protected `GET /provinces`, `GET /readings`, `GET /installations/{installationId}/readings`, `GET /installations/{installationId}/readings/{readingId}`, `GET /installations/{installationId}/last-reading`, `GET /installations/{installationId}/overview`, `GET /installations/{installationId}`, `GET /installations`, `GET /grid-substations/{substationId}`, `GET /districts/{districtId}/grid-substations`, `GET /districts/{districtId}`, and `GET /provinces/{provinceId}/districts`, six data models, the full dataset seed, and controlled user seeding. Login and protected reads use shared MongoDB limits. Installation JWT verification and URL ownership protect `POST /installations/{installationId}/readings`, with transactional active-status checks and shared device-write limits. Remaining resource endpoints, Swagger UI, database readiness, and other traffic limits remain planned. The architecture describes the target API; OpenAPI describes implemented routes only.
+The application currently provides public `/health` and `/openapi.json`, user/admin login at `POST /auth/user-tokens`, device login at `POST /auth/device-tokens`, protected `GET /provinces`, `GET /readings`, `GET /installations/{installationId}/readings`, `GET /installations/{installationId}/readings/{readingId}`, `GET /installations/{installationId}/last-reading`, `GET /installations/{installationId}/overview`, `GET /installations/{installationId}`, `GET /installations`, `GET /grid-substations/{substationId}`, `GET /districts/{districtId}/grid-substations`, `GET /districts/{districtId}`, `GET /provinces/{provinceId}/districts`, and `GET /provinces/{provinceId}`, six data models, the full dataset seed, and controlled user seeding. Login and protected reads use shared MongoDB limits. Installation JWT verification and URL ownership protect `POST /installations/{installationId}/readings`, with transactional active-status checks and shared device-write limits. Remaining resource endpoints, Swagger UI, database readiness, and other traffic limits remain planned. The architecture describes the target API; OpenAPI describes implemented routes only.
 
 ## Getting started
 
@@ -54,6 +54,7 @@ Append the paths below to your API base URL. Use your deployed HTTPS host with t
 | POST | `/auth/user-tokens` | Obtain a user/admin access token |
 | POST | `/auth/device-tokens` | Obtain an installation access token |
 | GET | `/provinces` | List provinces visible to the authenticated user |
+| GET | `/provinces/{provinceId}` | Retrieve public province details within the user's jurisdiction |
 | GET | `/provinces/{provinceId}/districts` | List authorized districts within a province |
 | GET | `/districts/{districtId}` | Retrieve public district details within the user's jurisdiction |
 | GET | `/grid-substations/{substationId}` | Retrieve public substation details within the user's jurisdiction |
@@ -115,6 +116,19 @@ POST JSON containing only `meterId` and `deviceSecret` to `/auth/device-tokens`.
 Send the user/admin bearer token to GET `/provinces`. Results follow the user's stored national, provincial, or district jurisdiction. See the [province-list contract](docs/API_DESIGN_RULES.md#protected-province-list) for filters, pagination, validators, and limits.
 
 ## List a province's districts
+
+Send a user/admin bearer token to GET `/provinces/{provinceId}` for only id/name. National/admin readers can request any province, provincial readers their assigned province, and district readers their current district's parent province. No query options or related collections. See the [province-detail contract](docs/API_DESIGN_RULES.md#province-details).
+
+Manual check (PowerShell; use your HTTPS base URL, real public province UUID and user token):
+
+```powershell
+$provinceUrl = "$base/api/v1.0/provinces/$provinceId"
+$response = Invoke-WebRequest $provinceUrl -Headers @{ Authorization = "Bearer $userToken" }
+$response.Content # 200: only id and name
+curl.exe -i $provinceUrl -H "Authorization: Bearer $userToken" -H "If-None-Match: $($response.Headers.ETag)" # 304, no body
+```
+
+Repeat with national/admin, own-province provincial and own-parent-province district tokens for 200; an outside province for a scoped analyst gives 403. An installation token gives 401, `not-a-uuid` gives 400, an unused valid UUID gives 404, and `?limit=1` gives 400. If-Modified-Since alone gives 200. Errors carry no-store and no validators.
 
 Send a user/admin bearer token to GET `/provinces/{provinceId}/districts`. National/admin and provincial readers receive the authorized province's districts; district analysts receive only their assigned district in their own province. Returns the full count/items collection without query options or pagination. See the [province-district contract](docs/API_DESIGN_RULES.md#province-districts).
 

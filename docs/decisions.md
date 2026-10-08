@@ -163,6 +163,11 @@ This file records choices, their reasons, and unresolved questions. Concrete sch
 - **Choice:** Authorize the requested province, then query only districts in that province; additionally restrict district analysts by their stored district UUID. Reuse district serialization and the unpaginated count/items format with fixed name/public UUID order.
 - **Reason:** A district analyst can navigate their parent province without seeing siblings or leaking their count through validators. Current stored ancestry establishes provincial membership; parent/list reads share a snapshot. No query options, pagination fields or unreliable Last-Modified are introduced.
 
+## D30 - Province detail access
+
+- **Choice:** Reuse the province access helper for province detail and province-district collection reads. Resolve district analysts' current stored district ancestry in the same snapshot as the requested province. Return only id/name without collections or query options.
+- **Reason:** Province access depends on current ancestry, not token claims; missing/broken assignments must fail closed before cache validators. A scoped public-response ETag supports conditional reads. Omit Last-Modified because province metadata has no reliable change timestamp.
+
 ## Pending decisions
 
 | Topic | Decision needed |

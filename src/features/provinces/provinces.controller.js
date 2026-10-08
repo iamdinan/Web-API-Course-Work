@@ -1,5 +1,19 @@
 const { createHash } = require("node:crypto");
 const provinces = require("./provinces.service");
+const { sendError } = require("../../utils/http-errors");
+
+async function getProvince(req, res) {
+  let body;
+  try {
+    body = await provinces.findProvince(req.user, req.params.provinceId);
+  } catch (error) {
+    if (!(error instanceof provinces.ProvinceAccessError)) throw error;
+    return sendError(res, 403, { code: "FORBIDDEN", message: error.message, details: [] });
+  }
+  if (!body) return sendError(res, 404, { code: "NOT_FOUND", message: "Province not found.", details: [] });
+  const tag = createHash("sha256").update(JSON.stringify({ user: req.user, body })).digest("hex");
+  return res.set({ "Cache-Control": "private, no-cache", ETag: `"${tag}"` }).json(body);
+}
 
 async function getProvinces(req, res) {
   let body;
@@ -14,4 +28,4 @@ async function getProvinces(req, res) {
   res.set({ "Cache-Control": "private, no-cache", ETag: `"${tag}"` }).json(body);
 }
 
-module.exports = { getProvinces };
+module.exports = { getProvinces, getProvince };

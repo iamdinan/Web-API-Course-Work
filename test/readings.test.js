@@ -2089,3 +2089,114 @@ test("OpenAPI province district collection documents scoped public items without
   assert.deepEqual(spec.components.schemas.DistrictList.required,["count","items"]);
   assert.equal(spec.components.schemas.DistrictList.properties.items.items.$ref,'#/components/schemas/District');
 });
+
+
+function provinceDetails(access, id, headers = {}, query = "") {
+  return rawGet(`/provinces/${id}${query}`, access, headers);
+}
+
+integration("province detail serves every authorized scope with only public fields and no collections", async t => {
+  const local = await models.District.findOne({});
+  const province = await models.Province.findOne({ publicId: local.provinceId });
+  await models.Province.collection.updateOne({ publicId: province.publicId }, { $set: { privateField: "secret", deviceCredentialHash: "secret", __v: 99 } });
+  for (const model of [models.District, models.GridSubstation, models.SolarInstallation, models.GenerationReading]) {
+    t.mock.method(model, "find", () => { throw Error("Related collection must not be queried"); });
+  }
+  for (const fields of [{}, { role: "admin" }, { readScope: "province", provinceId: local.provinceId }, { readScope: "district", districtId: local.publicId }]) {
+    const { access } = await analyst(fields);
+    const result = await provinceDetails(access, province.publicId);
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.body, { id: province.publicId, name: province.name });
+    assert.equal(result.headers["cache-control"], "private, no-cache");
+    assert.match(result.headers.etag, /^"[0-9a-f]{64}"$/);
+    assert.equal(result.headers["last-modified"], undefined);
+    if (!fields.readScope) {
+      const other = await models.Province.create({ name: "Other" });
+      assert.equal((await provinceDetails(access, other.publicId)).status, 200);
+    }
+  }
+});
+
+integration("province detail denies foreign scope, invalid actors and IDs, query options and broken district assignments before validators", async () => {
+  const local = await models.District.findOne({});
+  const foreign = await models.Province.create({ name: "Foreign" });
+  const { access } = await analyst();
+  const { access: provincial } = await analyst({ readScope: "province", provinceId: local.provinceId });
+  const { access: district } = await analyst({ readScope: "district", districtId: local.publicId });
+  for (const [auth,id,status] of [[null,local.provinceId,401], ["invalid",local.provinceId,401], [token(),local.provinceId,401],
+    [access,"invalid",400], [access,local.provinceId.replace(/^(.{14})4/, (_,prefix) => prefix + "1"),400],
+    [access,randomUUID(),404], [provincial,foreign.publicId,403], [district,foreign.publicId,403]]) {
+    const result = await provinceDetails(auth,id,{ "If-None-Match":"*" });
+    assert.equal(result.status,status);
+    assert.equal(result.headers["cache-control"],"no-store");
+    assert.equal(result.headers.etag,undefined);
+    assert.equal(result.headers["last-modified"],undefined);
+    assert.equal(result.body.id,undefined);
+    if(status===401) assert.equal(result.headers["www-authenticate"],"Bearer");
+  }
+  for (const query of ["?limit=1", "?sort=name", "?districtId="+local.publicId, "?extra=x"]) {
+    const result = await provinceDetails(access,local.provinceId,{ "If-None-Match":"*" },query);
+    assert.equal(result.status,400); assert.equal(result.body.code,"INVALID_QUERY"); assert.equal(result.headers.etag,undefined);
+  }
+  await models.District.collection.updateOne({ publicId: local.publicId }, { $set: { provinceId: foreign.publicId } });
+  assert.equal((await provinceDetails(district, local.provinceId, { "If-None-Match":"*" })).status,403);
+  assert.equal((await provinceDetails(district, foreign.publicId)).status,200);
+  await models.District.collection.deleteOne({ publicId:local.publicId });
+  assert.equal((await provinceDetails(district,foreign.publicId,{ "If-None-Match":"*" })).status,403);
+});
+
+integration("province conditional GET is bodyless, tracks public metadata and rechecks current authorization", async () => {
+  const province = await models.Province.findOne({});
+  const { user, access } = await analyst();
+  const first = await provinceDetails(access,province.publicId);
+  for (const value of [first.headers.etag,`W/${first.headers.etag}`,`"other", ${first.headers.etag}`,"*"]) {
+    const cached = await provinceDetails(access,province.publicId,{ "If-None-Match":value });
+    assert.equal(cached.status,304); assert.equal(cached.text,"");
+    assert.equal(cached.headers["content-type"],undefined);
+    assert.equal(cached.headers.etag,first.headers.etag);
+    assert.equal(cached.headers["cache-control"],"private, no-cache");
+  }
+  assert.equal((await provinceDetails(access,province.publicId,{ "If-Modified-Since":new Date("2099-01-01").toUTCString() })).status,200);
+  await models.District.create({ name:"Unrelated metadata",provinceId:province.publicId });
+  await models.Province.collection.updateOne({ publicId:province.publicId },{ $set:{ __v:99,privateField:"secret" } });
+  assert.equal((await provinceDetails(access,province.publicId,{ "If-None-Match":first.headers.etag })).status,304);
+  await models.Province.updateOne({ publicId:province.publicId },{ $set:{ name:"Renamed" } });
+  const changed = await provinceDetails(access,province.publicId,{ "If-None-Match":first.headers.etag });
+  assert.equal(changed.status,200); assert.equal(changed.body.name,"Renamed"); assert.notEqual(changed.headers.etag,first.headers.etag);
+  const foreign = await models.Province.create({ name:"New assignment" });
+  await models.User.updateOne({ publicId:user.publicId },{ $set:{ readScope:"province",provinceId:foreign.publicId } });
+  assert.equal((await provinceDetails(access,province.publicId,{ "If-None-Match":changed.headers.etag })).status,403);
+  await models.User.deleteOne({ publicId:user.publicId });
+  assert.equal((await provinceDetails(access,province.publicId,{ "If-None-Match":"*" })).status,401);
+});
+
+integration("province detail shares user-read limits before conditional GET and sanitizes database failures", async t => {
+  const local = await models.District.findOne({});
+  const { user,access } = await analyst();
+  const { createHash } = require("node:crypto");
+  await Counter.create({ _id: `user-read:${createHash("sha256").update(user.publicId).digest("hex")}`, count:119, expiresAt:new Date(Date.now()+60000) });
+  assert.equal((await provinceDistricts(access,local.provinceId)).status,200);
+  const limited = await provinceDetails(access,local.provinceId,{ "If-None-Match":"*" });
+  assert.equal(limited.status,429); assert.ok(Number(limited.headers["retry-after"])>0); assert.equal(limited.headers.etag,undefined);
+  const { access:another } = await analyst();
+  t.mock.method(models.Province,"findOne",()=>{ throw Error("private diagnostics"); });
+  const failed = await provinceDetails(another,local.provinceId);
+  assert.equal(failed.status,500);
+  assert.deepEqual(failed.body,{ code:"INTERNAL_SERVER_ERROR",message:"An unexpected error occurred.",details:[] });
+  assert.equal(failed.headers["cache-control"],"no-store"); assert.equal(failed.headers.etag,undefined);
+});
+
+test("OpenAPI province detail documents public fields, conditional GET and no query options", () => {
+  const spec = require("../docs/openapi.json");
+  const resource = spec.paths['/provinces/{provinceId}'];
+  assert.deepEqual(Object.keys(resource),["get"]);
+  assert.deepEqual(resource.get.security,[{ UserBearer:[] }]);
+  assert.deepEqual(resource.get.parameters.filter(p=>p.in==="path").map(p=>p.name),["provinceId"]);
+  assert.equal(resource.get.parameters.some(p=>p.in==="query"),false);
+  for(const status of [200,304,400,401,403,404,406,429,500]) assert.ok(resource.get.responses[status]);
+  assert.equal(resource.get.responses[304].content,undefined);
+  assert.equal(resource.get.responses[200].headers['Last-Modified'],undefined);
+  assert.equal(resource.get.responses[200].content['application/json'].schema.$ref,'#/components/schemas/Province');
+  assert.deepEqual(spec.components.schemas.Province.required,["id","name"]);
+  assert.equal(spec.components.schemas.Province.additionalProperties,false);
+});

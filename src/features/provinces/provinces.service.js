@@ -1,6 +1,22 @@
 const { Province, District, GridSubstation } = require("../../models");
 const { apiBaseUrl } = require("../../config/env");
 const { publicUuid } = require("../../services/user-principal");
+const mongoose = require("mongoose");
+const { provinceAllows } = require("../../services/province-access");
+
+class ProvinceAccessError extends Error {
+  constructor() { super("The province is outside your permitted jurisdiction."); }
+}
+
+async function findProvince(user, provinceId) {
+  return mongoose.connection.transaction(async session => {
+    const province = await Province.findOne({ publicId: provinceId }).select("publicId name -_id").session(session);
+    if (!province) return null;
+    if (!(await provinceAllows(user, provinceId, session))) throw new ProvinceAccessError();
+    const value = province.toJSON();
+    return { id: value.id, name: value.name };
+  }, { readConcern: { level: "snapshot" } });
+}
 
 class ProvinceFilterConflict extends Error {}
 
@@ -65,4 +81,4 @@ async function listProvinces(user, query) {
   };
 }
 
-module.exports = { listProvinces, ProvinceFilterConflict };
+module.exports = { listProvinces, ProvinceFilterConflict, findProvince, ProvinceAccessError };

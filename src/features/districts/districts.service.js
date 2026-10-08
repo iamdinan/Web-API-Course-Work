@@ -3,6 +3,7 @@ const { districtAncestry } = require("../../services/district-ancestry");
 const { jurisdictionAllows } = require("../../services/user-principal");
 const { Province, District } = require("../../models");
 const { listBody } = require("../../utils/list-response");
+const { provinceAllows } = require("../../services/province-access");
 
 class DistrictAccessError extends Error {
   constructor(message = "The district is outside your permitted jurisdiction.") {
@@ -28,17 +29,10 @@ async function listProvinceDistricts(user, provinceId) {
   return mongoose.connection.transaction(async session => {
     const province = await Province.findOne({ publicId: provinceId }).select("publicId -_id").session(session).lean();
     if (!province) return null;
-    let districtId;
-    if (user.readScope === "district") {
-      const assigned = await districtAncestry(user.districtId, session);
-      if (!assigned || assigned.provinceId !== provinceId) {
-        throw new DistrictAccessError("The province is outside your permitted jurisdiction.");
-      }
-      districtId = user.districtId;
-    }
-    if (!jurisdictionAllows(user, provinceId, districtId)) {
+    if (!(await provinceAllows(user, provinceId, session))) {
       throw new DistrictAccessError("The province is outside your permitted jurisdiction.");
     }
+    const districtId = user.readScope === "district" ? user.districtId : undefined;
     const filter = { provinceId, ...(districtId ? { publicId: districtId } : {}) };
     const records = await District.find(filter).select("publicId provinceId name -_id")
       .session(session).sort({ name: 1, publicId: 1 });

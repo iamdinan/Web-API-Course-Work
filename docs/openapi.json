@@ -2772,6 +2772,186 @@
           }
         }
       }
+    },
+    "/provinces/{provinceId}": {
+      "get": {
+        "operationId": "getProvince",
+        "summary": "Retrieve public province details within the current user jurisdiction",
+        "description": "Require current user authentication (installation tokens return 401), shared 120/minute User read limits and public UUID v4 provinceId (invalid format 400). Missing requested province returns 404. National analysts/admins read any province; provincial analysts only their assigned province; district analysts only the province containing their current assigned district. Other provinces or broken assigned district ancestry return 403. Resolve and authorize in a read snapshot before data or validators. Return only id/name, without collections. No query options; supplied parameters return 400 INVALID_QUERY. Strong ETag covers current principal and public representation; private, no-cache. Matching If-None-Match returns bodyless 304 after current access/rate checks. Omit Last-Modified because no reliable province metadata change timestamp exists; If-Modified-Since alone returns 200. Errors use no-store without validators.",
+        "security": [
+          {
+            "UserBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "provinceId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Strong/weak matching tag, quoted tag list, or * returns bodyless 304 after authorization. Takes precedence over If-Modified-Since."
+          },
+          {
+            "name": "If-Modified-Since",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Ignored because no reliable province metadata Last-Modified exists; alone returns 200."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Public province details",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ScopedETag"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Province"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Authorized public province unchanged; no body or Content-Type",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ScopedETag"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid province UUID (INVALID_REQUEST) or unsupported query parameters (INVALID_QUERY).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or installation token, or deleted/invalid user (UNAUTHORIZED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "WWW-Authenticate": {
+                "$ref": "#/components/headers/BearerChallenge"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Province outside stored jurisdiction (FORBIDDEN).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "FORBIDDEN",
+                  "message": "The province is outside your permitted jurisdiction.",
+                  "details": []
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Missing requested province (NOT_FOUND).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "NOT_FOUND",
+                  "message": "Province not found.",
+                  "details": []
+                }
+              }
+            }
+          },
+          "406": {
+            "$ref": "#/components/responses/NotAcceptable"
+          },
+          "429": {
+            "description": "Shared user-read limit exceeded (RATE_LIMIT_EXCEEDED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/LoginRetryAfter"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected persistence failure (INTERNAL_SERVER_ERROR).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
