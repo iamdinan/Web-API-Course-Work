@@ -136,12 +136,52 @@ test('existing OpenAPI is valid and lists exactly the implemented JSON operation
   assert.deepEqual(actual.sort(), documented.sort());
 });
 
+test('OpenAPI shares authentication, public responses and conditional-write contracts across operations', async () => {
+  const spec = await SwaggerParser.dereference(structuredClone(specification), { resolve: { external: false } });
+  for (const [url, item] of Object.entries(spec.paths)) {
+    for (const [method, operation] of Object.entries(item)) {
+      const publicOperation = url.startsWith('/auth/') || ['/health', '/openapi.json'].includes(url);
+      const deviceWrite = method === 'post' && url.endsWith('/readings');
+      assert.deepEqual(operation.security, publicOperation ? [] : [{ [deviceWrite ? 'InstallationBearer' : 'UserBearer']: [] }], `${method} ${url}`);
+      const input = operation.requestBody?.content['application/json']?.schema;
+      if (input) {
+        assert.equal(input.additionalProperties, false);
+        assert.deepEqual(Object.keys(input.properties).sort(), input.required.slice().sort());
+      }
+      for (const [status, response] of Object.entries(operation.responses)) {
+        if (['204', '304', '406'].includes(status)) assert.equal(response.content, undefined);
+        if (status === '201') {
+          for (const header of ['Location', 'ETag', 'Cache-Control']) assert.ok(response.headers[header]);
+        }
+        if (status === '429') assert.ok(response.headers['Retry-After']);
+        if (Number(status) >= 400 && status !== '406') {
+          assert.deepEqual(response.content['application/json'].schema, spec.components.schemas.Error);
+        }
+      }
+    }
+  }
+  const installation = spec.paths['/installations/{installationId}'];
+  for (const method of ['patch', 'delete']) {
+    assert.equal(installation[method].parameters.find(parameter => parameter.name === 'If-Match').required, false);
+    assert.ok(installation[method].responses['412']);
+  }
+  assert.ok(installation.delete.responses['409']);
+  assert.equal(installation.delete.requestBody, undefined);
+  const deleted = installation.delete.responses['204'];
+  for (const header of ['ETag', 'Last-Modified']) assert.equal(deleted.headers[header], undefined);
+  assert.equal(spec.components.schemas.InstallationInput.properties.deviceSecret.writeOnly, true);
+  for (const schema of Object.values(spec.components.schemas)) {
+    for (const field of ['_id', '__v', 'passwordHash', 'deviceCredentialHash']) {
+      assert.equal(Object.hasOwn(schema.properties || {}, field), false);
+    }
+  }
+});
+
 test('documented query options match strict validators, including installation status', () => {
   const expected = {
     '/installations': ['offset', 'limit', 'provinceId', 'districtId', 'substationId', 'status'],
     '/readings': ['offset', 'limit', 'from', 'to', 'sort', 'provinceId', 'districtId', 'substationId'],
     '/installations/{installationId}/readings': ['offset', 'limit', 'from', 'to', 'sort'],
-    '/summarize-district-generation': ['districtId'],
   };
   for (const [url, item] of Object.entries(specification.paths)) {
     for (const [method, operation] of Object.entries(item)) {
@@ -153,6 +193,11 @@ test('documented query options match strict validators, including installation s
   const status = specification.paths['/installations'].get.parameters.find(parameter => parameter.name === 'status');
   assert.deepEqual(status.schema.enum, ['active', 'inactive']);
   assert.notEqual(status.required, true);
+  const summary = specification.paths['/districts/{districtId}/generation-summary'].get;
+  const district = summary.parameters.find(parameter => parameter.name === 'districtId');
+  assert.equal(district.in, 'path');
+  assert.equal(district.required, true);
+  assert.equal(district.schema.format, 'uuid');
   const { validateInstallationQuery } = require('../src/features/readings/reading-query');
   for (const query of [{ status: 'active' }, { status: 'inactive' }, {}]) {
     let accepted = false;

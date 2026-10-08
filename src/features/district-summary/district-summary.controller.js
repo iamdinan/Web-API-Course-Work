@@ -7,7 +7,7 @@ async function getDistrictSummary(req, res) {
   // Capture once outside the transaction callback, including transaction retries.
   const asOf = summaryClock.now();
   let body;
-  try { body = await summary.summarizeDistrict(req.user, req.query.districtId, asOf); }
+  try { body = await summary.summarizeDistrict(req.user, req.params.districtId, asOf); }
   catch (error) {
     if (!(error instanceof summary.SummaryAccessError)) throw error;
     return sendError(res, 403, { code: "FORBIDDEN", message: error.message, details: [] });

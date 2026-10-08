@@ -3,12 +3,24 @@ const { apiBaseUrl } = require('./config/env');
 const apiRouter = require('./routes/api.routes');
 const { notFound, errorHandler } = require('./middleware/error-handler');
 
+const protectedReadPaths = [
+  /^\/installations(?:\/[^/]+(?:\/(readings(?:\/[^/]+)?|last-reading|overview))?)?\/?$/i,
+  /^\/readings\/?$/i,
+  /^\/grid-substations\/[^/]+(?:\/installations)?\/?$/i,
+  /^\/districts\/[^/]+(?:\/(grid-substations|generation-summary))?\/?$/i,
+  /^\/provinces(?:\/[^/]+(?:\/districts)?)?\/?$/i,
+];
+
 const app = express();
 app.disable('x-powered-by');
 app.set('etag', 'strong');
 // HTML and UI assets negotiate their own media types outside the JSON API gate.
 app.use(`${apiBaseUrl}/docs`, require('./features/documentation/documentation.routes'));
 app.use(apiBaseUrl, (req, res, next) => {
+  if (/^\/health\/?$/i.test(req.path)) {
+    res.set('Cache-Control', 'no-store');
+    res.locals.omitErrorValidators = true;
+  }
   if (req.method === 'POST' && /^\/auth\/(user|device)-tokens\/?$/i.test(req.path)) {
     res.set({ 'Cache-Control': 'no-store', Pragma: 'no-cache' });
   }
@@ -20,7 +32,7 @@ app.use(apiBaseUrl, (req, res, next) => {
     res.set('Cache-Control', 'no-store');
     res.locals.omitErrorValidators = true;
   }
-  if (req.method === 'GET' && (/^\/installations(?:\/[^/]+(?:\/(readings|last-reading|overview))?)?\/?$/i.test(req.path) || /^\/readings\/?$/i.test(req.path) || /^\/summarize-district-generation\/?$/i.test(req.path) || /^\/grid-substations\/[^/]+(?:\/installations)?\/?$/i.test(req.path) || /^\/districts\/[^/]+(?:\/grid-substations)?\/?$/i.test(req.path) || /^\/provinces(?:\/[^/]+(?:\/districts)?)?\/?$/i.test(req.path))) {
+  if (req.method === 'GET' && protectedReadPaths.some(pattern => pattern.test(req.path))) {
     // Include negotiation/parser failures that happen before the protected route.
     res.set('Cache-Control', 'no-store');
     res.locals.omitErrorValidators = true;

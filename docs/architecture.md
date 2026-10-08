@@ -1,12 +1,12 @@
 # Architecture — Solar Generation API
 
-This document defines the target stored data, resource surface, authorization, and persistence design. The [README](../README.md#current-implementation) tracks implementation status; [API_DESIGN_RULES.md](API_DESIGN_RULES.md) owns the HTTP contract and [decisions.md](decisions.md) records rationale. The [conceptual reference](data-model-reference.md) explains domain relationships.
+This document defines stored data, resource access and persistence. The [README](../README.md#current-implementation) tracks implementation status; [API_DESIGN_RULES.md](API_DESIGN_RULES.md) owns the HTTP contract and [decisions.md](decisions.md) records rationale. The [conceptual reference](data-model-reference.md) explains domain relationships.
 
 ## Runtime and structure
 
-Express serves JSON under `/api/v1.0`; production HTTPS terminates at the deployment proxy. `src/app.js` mounts the prefix; `src/index.js` awaits MongoDB before listening, fails startup on connection failure and closes HTTP/MongoDB on SIGINT/SIGTERM. Health is liveness without a database query.
+Express serves JSON under `/api/v1.0`; production HTTPS terminates at the deployment proxy. `src/app.js` mounts the prefix; `src/index.js` awaits MongoDB before listening, fails startup on connection failure and closes HTTP/MongoDB on SIGINT/SIGTERM. Health checks application and database availability using a MongoDB ping with a two-second driver timeout; disconnected state or ping failure yields unavailable.
 
-`src/features/` groups auth, provinces, districts, grid-substations, installations, readings, district-summary, health and documentation. Keep routes thin; separate validation, authorization, HTTP controllers and business/persistence services. Static health needs only its route. Readings owns public reading serialization; auth shares credential validation. `src/routes/api.routes.js` composes JSON features and serves OpenAPI; the app mounts documentation HTML/assets separately for media negotiation, sharing the OpenAPI documentation limiter.
+`src/features/` groups auth, provinces, districts, grid-substations, installations, readings, district-summary, health and documentation. Keep routes thin; separate validation, authorization, HTTP controllers and business/persistence services. Health separates its database check into a service. Readings owns public reading serialization; auth shares credential validation. `src/routes/api.routes.js` composes JSON features and serves OpenAPI; the app mounts documentation HTML/assets separately for media negotiation, sharing the OpenAPI documentation limiter. Swagger serves the local `swagger-ui-dist` bundle; a custom operation sorter keeps resource groups and read/write order stable ([Swagger configuration](https://swagger.io/docs/open-source-tools/swagger-ui/usage/configuration/)).
 
 Shared middleware owns JWT/ownership verification, rate enforcement and errors; shared services own passwords/JWTs, current principals, ancestry/access and counters. Utilities own timestamps, list responses, HTTP errors, public-path/query rejection and response validators; models/configuration remain shared. Extract helpers when multiple features/setup tools need them. All query-free routes reuse rejectQueryParameters; protected reads keep authentication/read-limit/path checks first, while writes validate access/body/query before write counters. Public health/OpenAPI also reject queries. Exact HTTP errors belong to the HTTP contract.
 
@@ -24,9 +24,8 @@ Shared middleware owns JWT/ownership verification, rate enforcement and errors; 
 - Generate random, immutable UUID v4 `publicId` values. Use them in URLs, parent references, response `id` fields, `Location`, and JWT claims.
 - Store BSON dates as UTC instants. Public timestamp formatting follows the [HTTP contract](API_DESIGN_RULES.md#responses); local-day calculations use Asia/Colombo.
 - Keep MongoDB `_id` internal. Disable Mongoose's `id` virtual derived from `_id`; omit `_id`, `__v`, and credential hashes from JSON.
-- Index `publicId` uniquely on every model and readings on `{ installationId: 1, recordedAt: -1, publicId: -1 }`. Bound regional and time-window queries in MongoDB.
 
-References are validated public UUID strings, not ObjectId references. Parent-plus-publicId indexes support hierarchy lists. Readings have the unique timestamp index, descending history index, and a global time/publicId index for regional history. Meter ID and normalized email have unique indexes. User jurisdiction is national with no assignment, province with only `provinceId`, or district with only `districtId`; admins require national.
+References are validated public UUID strings, not ObjectId references. Every model has a unique publicId index; parent-plus-publicId indexes support hierarchy lists. Bound regional and time-window queries in MongoDB. Readings have the unique timestamp index, descending `{ installationId: 1, recordedAt: -1, publicId: -1 }` history index, and a global time/publicId index for regional history. Meter ID and normalized email have unique indexes. User jurisdiction is national with no assignment, province with only `provinceId`, or district with only `districtId`; admins require national.
 
 Normal validated document writes check parent existence. Validate complete User documents when changing roles/jurisdictions; partial query validators cannot enforce cross-field rules. Model updates/deletions of readings are blocked except insert-only upserts. Raw collection access bypasses Mongoose guards and must not be used for API writes. Services must coordinate ingestion/deletion as specified below.
 
@@ -58,7 +57,7 @@ New development installations use the [README seed credential configuration](../
 
 `scripts/seed-data.js` generates the geography and profiles; `scripts/seed.js` handles persistence. See the [README](../README.md#sample-data) for commands and credential configuration.
 
-The former two-installation demo is preserved separately in `seed_fixture_archive`, including copies of the shared Western/Colombo parents reused in the live hierarchy. The current seed leaves the archive untouched. Migration history belongs to the [prompt log](prompt-log.md).
+The seed leaves the historical `seed_fixture_archive` untouched. Archive contents and migration evidence are recorded in the [prompt log](prompt-log.md).
 
 ### User seeding
 
@@ -104,37 +103,17 @@ Prefix every path below with `/api/v1.0`. Each row is one path. “User” means
 | `/installations/{installationId}/readings` | GET, POST | User; history. Bound device; new reading |
 | `/installations/{installationId}/readings/{readingId}` | GET | User; individual reading |
 | `/readings` | GET | User; regional history |
-| `/summarize-district-generation` | GET | User; required `districtId` query |
+| `/districts/{districtId}/generation-summary` | GET | User; district summary |
 
 ### Authentication and documentation
 
 | Path | Method | Access |
 | --- | --- | --- |
-| `/health` | GET | Public application liveness; returns `{ "status": "ok" }`, no database check |
+| `/health` | GET | Public application/database health; MongoDB ping; HTTP behavior in the [health contract](API_DESIGN_RULES.md#health-and-parser-behavior) |
 | `/auth/device-tokens` | POST | Meter credential exchange |
 | `/auth/user-tokens` | POST | User or admin credential exchange |
 | `/openapi.json` | GET | Public OpenAPI specification |
 | `/docs` | GET | Public Swagger UI |
-
-## Read behavior
-
-Use credential-free projections and explicit public serializers. Resolve complete ancestry and apply current stored jurisdiction in database filters before any results, counts, pagination, composites, summaries or validator input. Broken implicit ancestry fails closed; explicit resource/filter errors follow the [HTTP contract](API_DESIGN_RULES.md#resource-and-query-rules). Preserve inactive installations and history in analyst reads.
-
-Use one read-only snapshot for ancestry and dependent queries, including count/page and composites. Query bounded time windows with deterministic public-ID tie-breakers; do not load unrestricted regional readings, even for national users. Common query/order/envelope/cache behavior belongs to the HTTP contract.
-
-### District generation summary
-
-Reuse districtAncestry/jurisdictionAllows, then bind substations to districtId, installations to those substation UUIDs and readings to those installation UUIDs in one snapshot. Capture asOf once outside retries. Aggregate latest eligible readings by installationId, recordedAt/publicId descending, excluding future measurements; query daily counters in installationId/recordedAt/publicId order from Asia/Colombo midnight through asOf. Use displayTimestamp only for output; retain millisecond precision internally. [HTTP rules](API_DESIGN_RULES.md#district-generation-summary) own freshness, energy/reset/completeness calculations and the seven-field response.
-
-## Admin installation management
-
-Derive `installation-create`, `installation-status-update` and `installation-delete` from the current stored admin role. Admins also have national analyst reads under the same read rules/limits. No user/geography management, reading-write, credential-rotation, general edit or PUT permissions. Initial accounts use controlled [user seeding](#user-seeding).
-
-- **Creation:** Reuse current-user/admin verification, validated models, salted scrypt hashPassword, installationBody/installationETag and the unique meter index. Resolve GridSubstation by public UUID before insert; the model checks its parent too. Generate UUID/status, trim meterId, preserve supplied secret characters and never read the development seed prefix. Unique-index collisions handle concurrent duplicates and reserve inactive meters. Never return/log credentials.
-- **PATCH:** In a snapshot/majority transaction, installationForWrite resolves credential-free public fields and evaluates the [optional precondition](API_DESIGN_RULES.md#caching-and-access). Set only status and a fresh temporary `_ingestionLock` UUID, then unset the lock before commit. Force a real parent write even for no-op status updates; conflicts retry lookup/comparison. Return the committed public representation. Preserve credentials, identity, ancestry and history. Inactive remains blocked until explicit reactivation; unchanged credentials/unexpired tokens resume only until their original expiry.
-- **DELETE:** In each snapshot/majority attempt, resolve existence/precondition, write the same temporary parent lock, then query GenerationReading.exists by installation UUID. Abort on any history; otherwise delete that parent in the same session. Never mutate readings, geography or users. Deletion releases meter uniqueness; replacements get new UUIDs inaccessible to old tokens. HTTP validation rejects framed bodies even when express.json does not parse their media type.
-
-Both lifecycle transactions serialize with ingestion/seed writes to the same parent. Ingestion committing first makes DELETE find history; deletion committing first prevents reading commit. Snapshot-only guards or separate check/delete operations are insufficient. Retries must re-evaluate existence, preconditions, status/history; never reuse a successful stale comparison. Failures roll back lock/domain changes. Internal locks cannot affect unchanged public ETags. Shared admin counters and response ordering belong to the HTTP contract.
 
 ## Security
 
@@ -152,13 +131,19 @@ Look up the exact submitted meter ID, explicitly select deviceCredentialHash and
 
 verifyInstallationJwt requires actor=installation and exactly scope=installation-write; reload publicId/status by sub and reject absent, invalid or inactive installations. Attach only frozen `{ id: installation.publicId }` as req.installation. requireInstallationOwnership follows verification and matches the URL installationId exactly. User/admin context cannot substitute; token claims cannot override status or binding.
 
-### Reading ingestion
+### Verified users
 
-Initialize declared indexes, then use mongoose.connection.transaction with snapshot reads/majority writes. In each retry, conditionally update the authenticated public UUID with status=active, setting a fresh `_ingestionLock` UUID to force a parent write. If it no longer matches, reload and reject absent/inactive/invalid state. Save a validated new GenerationReading with server-generated UUID, authenticated installation reference and server receipt time in that session; unset the lock before commit. Duplicate timestamps/failures roll back all writes. The lock is private and excluded from validators. Coordinate lifecycle/seed writes through that same parent as described [above](#admin-installation-management).
+verifyUserJwt requires actor=user, reloads the current User without credentials and validates role/scope/assignment. Attach only stored identity/access and derive admin permissions again; province-list persistence is described below.
 
-### Verified users and province access
+## Read behavior
 
-verifyUserJwt requires actor=user, reloads the current User without credentials and validates role/scope/assignment. Attach only stored identity/access and derive admin permissions again. Province queries are unrestricted nationally, constrained to the assigned province provincially, or resolve the assigned district's parent province for district users. Return the complete authorized province list with count derived from records, without queries or pagination. Resolve district ancestry/list in one read-only snapshot; missing/broken ancestry has no visible province. Apply public projections, name/publicId order and principal-scoped validators afterward.
+Use credential-free projections and explicit public serializers. Resolve complete ancestry and apply current stored jurisdiction in database filters before any results, counts, pagination, composites, summaries or validator input. Broken implicit ancestry fails closed; explicit resource/filter errors follow the [HTTP contract](API_DESIGN_RULES.md#resource-and-query-rules). Preserve inactive installations and history in analyst reads.
+
+Geography reads, installation detail/overview/collections, reading collections and summaries use one read-only snapshot for ancestry and dependent queries. Individual/latest reading lookups authorize ancestry first, then query the immutable reading without a snapshot. Query bounded time windows with deterministic public-ID tie-breakers; do not load unrestricted regional readings, even for national users. Common query/order/envelope/cache behavior belongs to the HTTP contract.
+
+### Province list
+
+Province queries are unrestricted nationally, constrained to the assigned province provincially, or resolve the assigned district's parent province for district users. Resolve district ancestry and the complete authorized list in one read-only snapshot; missing/broken ancestry has no visible province. Apply public projections and name/publicId order, deriving count from records through listBody. [HTTP rules](API_DESIGN_RULES.md#protected-province-list) own queries, response fields and scoped validators.
 
 ### Province detail access
 
@@ -212,6 +197,24 @@ listReadings authorizes installation ancestry, then queries count and sorted/off
 
 In one snapshot, resolve explicit filters/ancestors and current jurisdiction before comparing filter relationships. Resolve eligible province/district/substation/installation UUIDs with restricted credential-free queries, then bind reading count/page to those IDs and the time window. Missing implicit ancestry yields an empty scope. Share history query validation/serialization/pagination; province listing accepts no filters.
 
+### District generation summary
+
+Reuse districtAncestry/jurisdictionAllows, then bind substations to districtId, installations to those substation UUIDs and readings to those installation UUIDs in one snapshot. Capture asOf once outside retries. Aggregate latest eligible readings by installationId, recordedAt/publicId descending, excluding future measurements; query daily counters in installationId/recordedAt/publicId order from Asia/Colombo midnight through asOf. Use displayTimestamp only for output; retain millisecond precision internally. [HTTP rules](API_DESIGN_RULES.md#district-generation-summary) own freshness, energy/reset/completeness calculations and the seven-field response.
+
+## Admin installation management
+
+Derive `installation-create`, `installation-status-update` and `installation-delete` from the current stored admin role. Admins also have national analyst reads under the same read rules/limits. No user/geography management, reading-write, credential-rotation, general edit or PUT permissions. Initial accounts use controlled [user seeding](#user-seeding).
+
+- **Creation:** Reuse current-user/admin verification, validated models, salted scrypt hashPassword, installationBody/installationETag and the unique meter index. Resolve GridSubstation by public UUID before insert; the model checks its parent too. Generate UUID/status, trim meterId, preserve supplied secret characters and never read the development seed prefix. Unique-index collisions handle concurrent duplicates and reserve inactive meters. Never return/log credentials.
+- **PATCH:** In a snapshot/majority transaction, installationForWrite resolves credential-free public fields and evaluates the [optional precondition](API_DESIGN_RULES.md#caching-and-access). Set only status and a fresh temporary `_ingestionLock` UUID, then unset the lock before commit. Force a real parent write even for no-op status updates; conflicts retry lookup/comparison. Return the committed public representation. Preserve credentials, identity, ancestry and history. Inactive remains blocked until explicit reactivation; unchanged credentials/unexpired tokens resume only until their original expiry.
+- **DELETE:** In each snapshot/majority attempt, resolve existence/precondition, write the same temporary parent lock, then query GenerationReading.exists by installation UUID. Abort on any history; otherwise delete that parent in the same session. Never mutate readings, geography or users. Deletion releases meter uniqueness; replacements get new UUIDs inaccessible to old tokens. HTTP validation rejects framed bodies even when express.json does not parse their media type.
+
+Both lifecycle transactions serialize with ingestion/seed writes to the same parent. Ingestion committing first makes DELETE find history; deletion committing first prevents reading commit. Snapshot-only guards or separate check/delete operations are insufficient. Retries must re-evaluate existence, preconditions, status/history; never reuse a successful stale comparison. Failures roll back lock/domain changes. Internal locks cannot affect unchanged public ETags. Shared admin counters and response ordering belong to the HTTP contract.
+
+## Reading ingestion
+
+Initialize declared indexes, then use mongoose.connection.transaction with snapshot reads/majority writes. In each retry, conditionally update the authenticated public UUID with status=active, setting a fresh `_ingestionLock` UUID to force a parent write. If it no longer matches, reload and reject absent/inactive/invalid state. Save a validated new GenerationReading with server-generated UUID, authenticated installation reference and server receipt time in that session; unset the lock before commit. Duplicate timestamps/failures roll back all writes. The lock is private and excluded from validators. Coordinate lifecycle/seed writes through that same parent as described [above](#admin-installation-management).
+
 ## Rate limits
 
 Counters live in operational `token_rate_limits`, outside the six domain models. Unique hashed keys identify IP/email/meter/principal; atomic update pipelines reset expired windows or increment counts, with TTL cleanup. Retry first-upsert collisions against the winning key. Separate user/device login and read/device/admin-write namespaces; share counters across instances and fail closed on database errors.
@@ -223,6 +226,5 @@ Counters live in operational `token_rate_limits`, outside the six domain models.
 | User/admin reads | 120 / min | User | Implemented |
 | Admin installation writes | 30 / min | Admin; shared POST/PATCH/DELETE | Implemented |
 | Public docs | 60 / min | IP; shared specification, Swagger page and assets | Implemented |
-| Backstop | 300 / min | IP | Planned |
 
-[HTTP rules](API_DESIGN_RULES.md#rate-limits) own consumption timing/429 responses; [pending decisions](decisions.md#pending-decisions) cover remaining thresholds.
+[HTTP rules](API_DESIGN_RULES.md#rate-limits) own consumption timing and responses.

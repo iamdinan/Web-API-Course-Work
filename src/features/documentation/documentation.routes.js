@@ -43,7 +43,7 @@ const operationOrder = [
   'get /installations/{installationId}/readings/{readingId}',
   'get /installations/{installationId}/last-reading',
   'post /installations/{installationId}/readings',
-  'get /summarize-district-generation',
+  'get /districts/{districtId}/generation-summary',
   'get /health',
   'get /openapi.json'
 ];

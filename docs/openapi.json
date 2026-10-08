@@ -3,7 +3,7 @@
   "info": {
     "title": "Solar Generation API",
     "version": "1.0.0",
-    "description": "Implemented endpoints: application liveness, OpenAPI, user/admin and device JWT exchange, and jurisdiction-scoped province lists. Active installations can submit append-only readings. Users can retrieve individual readings within their stored jurisdiction. Users can page and filter installation reading history within current jurisdiction. Current database admins can create active installations with independently supplied device credentials. Current admins can activate or deactivate installations with atomic optional If-Match preconditions. Admins can permanently delete installations without readings using atomic optional If-Match and ingestion coordination."
+    "description": "Solar generation API with user/device authentication, jurisdiction-scoped geography, installation and reading access, district generation summaries, admin installation lifecycle operations, database health and public documentation."
   },
   "servers": [{"url": "/api/v1.0"}],
   "tags": [
@@ -21,27 +21,26 @@
       "get": {
         "tags": ["System"],
         "operationId": "getHealth",
-        "summary": "Check application liveness",
-        "description": "Public endpoint. Does not check MongoDB or other dependencies. Supports If-None-Match using a stable strong ETag. Accepts no query parameters; any supplied query parameter returns 400 INVALID_QUERY.",
+        "summary": "Check application and database health",
+        "description": "Public endpoint. Ping MongoDB with a two-second driver timeout after query validation and media negotiation. Disconnected state, ping failure or timeout returns a sanitized 503 DATABASE_UNAVAILABLE error. All health responses use no-store without ETag or Last-Modified; conditional headers never produce 304. Accepts no query parameters; any supplied query parameter returns 400 INVALID_QUERY.",
         "security": [],
-        "parameters": [{"name": "If-None-Match", "in": "header", "schema": {"type": "string"}}],
         "responses": {
           "200": {
-            "description": "Application is running",
+            "description": "Application is running and MongoDB responds to ping",
             "headers": {
-              "ETag": {"schema": {"type": "string"}, "description": "Strong representation validator"},
-              "Cache-Control": {"schema": {"type": "string", "enum": ["no-cache"]}}
+              "Cache-Control": {"$ref": "#/components/headers/NoStore"}
             },
             "content": {
               "application/json": {
-                "schema": {"type": "object", "required": ["status"], "additionalProperties": false, "properties": {"status": {"type": "string", "enum": ["ok"]}}},
-                "example": {"status": "ok"}
+                "schema": {"type": "object", "required": ["status", "database"], "additionalProperties": false, "properties": {"status": {"type": "string", "enum": ["ok"]}, "database": {"type": "string", "enum": ["up"]}}},
+                "example": {"status": "ok", "database": "up"}
               }
             }
           },
-          "304": {
-            "description": "Unchanged representation; no body",
-            "headers": {"ETag": {"schema": {"type": "string"}}, "Cache-Control": {"schema": {"type": "string"}}}
+          "503": {
+            "description": "MongoDB is disconnected, ping fails or exceeds its two-second timeout",
+            "headers": {"Cache-Control": {"$ref": "#/components/headers/NoStore"}},
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}, "example": {"code": "DATABASE_UNAVAILABLE", "message": "Database is unavailable.", "details": []}}}
           },
           "406": {"$ref": "#/components/responses/NotAcceptable"},
           "400": {"$ref": "#/components/responses/QueryNotAllowed"}
@@ -1306,17 +1305,17 @@
         }
       }
     },
-    "/summarize-district-generation": {
+    "/districts/{districtId}/generation-summary": {
       "get": {
         "tags": ["Summaries"],
         "operationId": "summarizeDistrictGeneration",
         "summary": "Summarize current power and observed daily energy for an authorized district",
-        "description": "Require current user authentication (installation tokens 401) and shared 120/minute User read limits. Accept exactly one required public UUID v4 districtId query parameter and no other options; missing/invalid/repeated parameters return 400. Missing district or ancestry returns 404; authorize national/admin, assigned province or assigned district before aggregate queries or validators. Capture asOf once per request, including transaction retries. Current power sums each active installation latest recordedAt at or before asOf, if within the inclusive 30-minute freshness window; active installations without eligible readings count as stale. Use Asia/Colombo midnight through asOf inclusive for energy. todayEnergyKwh is observed daily energy that may be incomplete: sum nonnegative consecutive counter differences per installation, including inactive history, skipping decreases and resuming from each lower counter. Use an exact midnight baseline if available; otherwise start at the first in-day sample and flag incomplete. No interpolation, extrapolation, pre-midnight baseline or estimation. Fewer than two daily readings, missing midnight baseline or any decrease counts that installation as incomplete once. Empty districts return zero totals/counts. Read ancestry, status and history in one snapshot. ETag covers current principal and complete response including asOf; private, no-cache. The asOf field uses DD Mon YYYY, hh:mm AM/PM (Sri Lanka), while calculations retain full precision. ETag changes when the displayed timestamp or calculated values change, including freshness expiry and midnight without new readings. Matching If-None-Match yields bodyless 304 only after access/rate checks. Omit Last-Modified; If-Modified-Since alone returns 200. Errors are no-store without validators.",
+        "description": "Require current user authentication (installation tokens 401) and shared 120/minute User read limits. Require public UUID v4 districtId in the path; invalid UUIDs return 400 INVALID_REQUEST. Accept no query parameters; any supplied query parameter, including districtId, returns 400 INVALID_QUERY. Missing district or ancestry returns 404; authorize national/admin, assigned province or assigned district before aggregate queries or validators. Capture asOf once per request, including transaction retries. Current power sums each active installation latest recordedAt at or before asOf, if within the inclusive 30-minute freshness window; active installations without eligible readings count as stale. Use Asia/Colombo midnight through asOf inclusive for energy. todayEnergyKwh is observed daily energy that may be incomplete: sum nonnegative consecutive counter differences per installation, including inactive history, skipping decreases and resuming from each lower counter. Use an exact midnight baseline if available; otherwise start at the first in-day sample and flag incomplete. No interpolation, extrapolation, pre-midnight baseline or estimation. Fewer than two daily readings, missing midnight baseline or any decrease counts that installation as incomplete once. Empty districts return zero totals/counts. Read ancestry, status and history in one snapshot. ETag covers current principal and complete response including asOf; private, no-cache. The asOf field uses DD Mon YYYY, hh:mm AM/PM (Sri Lanka), while calculations retain full precision. ETag changes when the displayed timestamp or calculated values change, including freshness expiry and midnight without new readings. Matching If-None-Match yields bodyless 304 only after access/rate checks. Omit Last-Modified; If-Modified-Since alone returns 200. Errors are no-store without validators.",
         "security": [{"UserBearer": []}],
         "parameters": [
           {
             "name": "districtId",
-            "in": "query",
+            "in": "path",
             "required": true,
             "schema": {"type": "string", "format": "uuid", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"}
           },
@@ -1344,7 +1343,7 @@
             "headers": {"ETag": {"$ref": "#/components/headers/ScopedETag"}, "Cache-Control": {"$ref": "#/components/headers/PrivateCacheControl"}}
           },
           "400": {
-            "description": "Missing, invalid or repeated districtId, or unsupported query parameters (INVALID_QUERY).",
+            "description": "Invalid districtId path UUID (INVALID_REQUEST), or any supplied query parameter including districtId (INVALID_QUERY).",
             "headers": {"Cache-Control": {"$ref": "#/components/headers/NoStore"}},
             "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
           },
@@ -1465,11 +1464,11 @@
             "type": "string",
             "format": "date-time",
             "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?(?:Z|[+-]\\d{2}:\\d{2})$",
-            "description": "Valid calendar timestamp with explicit timezone and at most millisecond precision. No clock-drift or age bounds currently defined."
+            "description": "Valid calendar timestamp with explicit timezone and at most millisecond precision."
           },
-          "powerKw": {"type": "number", "minimum": 0, "description": "Finite nonnegative JSON number; no upper bound currently defined."},
-          "energyKwh": {"type": "number", "minimum": 0, "description": "Finite nonnegative JSON number; no upper bound currently defined."},
-          "voltageV": {"type": "number", "minimum": 0, "description": "Finite nonnegative JSON number; no upper bound currently defined."}
+          "powerKw": {"type": "number", "minimum": 0, "description": "Finite nonnegative JSON number."},
+          "energyKwh": {"type": "number", "minimum": 0, "description": "Finite nonnegative JSON number."},
+          "voltageV": {"type": "number", "minimum": 0, "description": "Finite nonnegative JSON number."}
         }
       },
       "GenerationReading": {
@@ -1481,9 +1480,9 @@
           "installationId": {"type": "string", "format": "uuid"},
           "recordedAt": {"type": "string", "format": "date-time", "description": "Asia/Colombo +05:30 timestamp."},
           "receivedAt": {"type": "string", "format": "date-time", "description": "Server receipt time in Asia/Colombo +05:30."},
-          "powerKw": {"type": "number", "minimum": 0, "description": "Finite nonnegative JSON number; no upper bound currently defined."},
-          "energyKwh": {"type": "number", "minimum": 0, "description": "Finite nonnegative JSON number; no upper bound currently defined."},
-          "voltageV": {"type": "number", "minimum": 0, "description": "Finite nonnegative JSON number; no upper bound currently defined."},
+          "powerKw": {"type": "number", "minimum": 0, "description": "Finite nonnegative JSON number."},
+          "energyKwh": {"type": "number", "minimum": 0, "description": "Finite nonnegative JSON number."},
+          "voltageV": {"type": "number", "minimum": 0, "description": "Finite nonnegative JSON number."},
           "recordedAtDisplay": {
             "type": "string",
             "readOnly": true,

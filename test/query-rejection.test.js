@@ -21,7 +21,7 @@ before(async () => {
 after(async () => { await new Promise(resolve => server.close(resolve)); });
 
 function fixtures(t) {
-  const userId = randomUUID(), installationId = randomUUID(), substationId = randomUUID();
+  const userId = randomUUID(), installationId = randomUUID(), substationId = randomUUID(), districtId = randomUUID();
   const user = { publicId: userId, role: "admin", readScope: "national" };
   const sign = (id, claims) => jwt.sign(claims, config.signingKey, {
     algorithm: config.algorithm, subject: id, issuer: config.issuer, audience: config.audience, expiresIn: 900,
@@ -36,7 +36,7 @@ function fixtures(t) {
   for (const name of ["checkUserTokenLimit", "checkDeviceTokenLimit", "checkDeviceWriteLimit", "checkAdminWriteLimit"]) {
     t.mock.method(limits, name, () => { assert.fail(`${name} must not run for invalid queries`); });
   }
-  return { user, userToken, deviceToken, installationId, substationId, reads: () => reads };
+  return { user, userToken, deviceToken, installationId, substationId, districtId, reads: () => reads };
 }
 
 function endpoints(f) {
@@ -44,7 +44,7 @@ function endpoints(f) {
     ["GET", "/health"], ["GET", "/openapi.json"],
     ["POST", "/auth/user-tokens", null, { email: "query@example.com", password: "test-secret" }],
     ["POST", "/auth/device-tokens", null, { meterId: "METER-TEST", deviceSecret: "test-secret" }],
-    ...[`/grid-substations/${f.substationId}`, `/installations/${f.installationId}`,
+    ...[`/districts/${f.districtId}/generation-summary`, `/grid-substations/${f.substationId}`, `/installations/${f.installationId}`,
       `/installations/${f.installationId}/overview`, `/installations/${f.installationId}/last-reading`,
       `/installations/${f.installationId}/readings/${randomUUID()}`].map(path => ["GET", path, f.userToken]),
     ["POST", "/installations", f.userToken, { substationId: f.substationId, meterId: "METER-TEST", deviceSecret: "test-secret" }],
@@ -62,6 +62,7 @@ function request([method, path, token, body], suffix = "", headers = {}) {
 }
 
 test("formerly ignored queries are rejected across public, login, read and write endpoints", async t => {
+  t.mock.method(require('../src/features/health/health.service'), 'checkDatabase', () => assert.fail('Invalid queries must not ping the database'));
   const f = fixtures(t);
   for (const endpoint of endpoints(f)) {
     for (const suffix of ["?status=inactive", "?limit=1&limit=2", "?extra="]) {
@@ -73,7 +74,7 @@ test("formerly ignored queries are rejected across public, login, read and write
       assert.equal(response.headers.get("last-modified"), null);
     }
   }
-  assert.equal(f.reads(), 15); // Five protected reads, three query shapes each.
+  assert.equal(f.reads(), 18); // Six protected reads, three query shapes each.
 });
 
 test("query rejection preserves authentication, admin/ownership checks and read limits", async t => {
@@ -92,9 +93,10 @@ test("query rejection preserves authentication, admin/ownership checks and read 
   assert.equal(limited.headers.get("retry-after"), "12"); await limited.text();
 });
 
-test("public endpoints still work without queries and OpenAPI documents the new 400 responses", async () => {
+test("public endpoints still work without queries and OpenAPI documents the new 400 responses", async t => {
+  t.mock.method(require('../src/features/health/health.service'), 'checkDatabase', async () => true);
   const health = await request(["GET", "/health"]);
-  assert.equal(health.status, 200); assert.deepEqual(await health.json(), { status: "ok" });
+  assert.equal(health.status, 200); assert.deepEqual(await health.json(), { status: "ok", database: "up" });
   const response = await request(["GET", "/openapi.json"]);
   assert.equal(response.status, 200);
   const spec = await response.json();

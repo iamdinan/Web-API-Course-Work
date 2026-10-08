@@ -16,7 +16,6 @@ const limits = require("../src/services/token-rate-limit.service");
 const { verifyUserJwt } = require("../src/middleware/verify-user-jwt");
 let origin, server;
 before(async () => {
-  require('node:test').mock.method(limits, 'checkDocumentationLimit', async () => 0);
   server = app.listen(0, "127.0.0.1");
   await once(server, "listening");
   origin = `http://127.0.0.1:${server.address().port}${apiBaseUrl}/provinces`;
@@ -217,16 +216,4 @@ test("read limits and database failures fail closed with sanitized standard erro
   const failed = await get(accessToken);
   assert.equal(failed.status, 500);
   assert.deepEqual(await failed.json(), { code: "INTERNAL_SERVER_ERROR", message: "An unexpected error occurred.", details: [] });
-});
-
-test("OpenAPI documents the protected province list and bearer authentication", async () => {
-  const response = await fetch(origin.replace(/\/provinces$/, "/openapi.json"));
-  const spec = await response.json();
-  assert.deepEqual(spec.paths["/provinces"].get.security, [{ UserBearer: [] }]);
-  assert.equal(spec.components.securitySchemes.UserBearer.scheme, "bearer");
-  assert.equal(spec.paths["/provinces"].post, undefined);
-  assert.deepEqual(spec.paths["/provinces"].get.parameters.filter(parameter => parameter.in === "query"), []);
-  assert.deepEqual(spec.components.schemas.ProvinceList.required, ["count", "items"]);
-  assert.deepEqual(Object.keys(spec.components.schemas.ProvinceList.properties), ["count", "items"]);
-  for (const status of ["200", "304", "400", "401", "406", "429", "500"]) assert.ok(spec.paths["/provinces"].get.responses[status]);
 });

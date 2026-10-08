@@ -17,8 +17,5 @@ router.get("/installations/:installationId/last-reading", verifyUserJwt, userRea
 router.get("/installations/:installationId/overview", verifyUserJwt, userReadLimit, validateInstallationPath, rejectQueryParameters, getOverview);
 router.post("/installations/:installationId/readings", verifyInstallationJwt, requireInstallationOwnership, readingRequest, rejectQueryParameters, deviceWriteLimit, postReading);
 router.get("/installations/:installationId/readings", verifyUserJwt, userReadLimit, validateInstallationPath, validateReadingQuery, getReadings);
-router.get("/installations/:installationId/readings/:readingId", (req, res, next) => {
-  res.set("Cache-Control", "no-store");
-  next();
-}, verifyUserJwt, userReadLimit, validatePublicPath("installationId", "readingId"), rejectQueryParameters, getReading);
+router.get("/installations/:installationId/readings/:readingId", verifyUserJwt, userReadLimit, validatePublicPath("installationId", "readingId"), rejectQueryParameters, getReading);
 module.exports = router;
