@@ -8,7 +8,7 @@ Node.js/Express, Mongoose, and MongoDB Atlas. The target JSON API and public doc
 | ------------------------------------------------------------ | --------------------------------------------------------------------- |
 | [README.md](README.md)                                       | Setup, commands, current implementation, and documentation navigation |
 | [docs/architecture.md](docs/architecture.md)                 | Stored data, resource paths, access, and persistence operations       |
-| [docs/API_DESIGN_RULES.md](docs/API_DESIGN_RULES.md)         | HTTP behavior and response contract                                   |
+| [docs/API_DESIGN_RULES.md](docs/API_DESIGN_RULES.md)         | Common REST API conventions                                   |
 | [docs/decisions.md](docs/decisions.md)                       | Design rationale and unresolved issues                                |
 | [docs/data-model-reference.md](docs/data-model-reference.md) | Conceptual domain entities and relationships                          |
 
@@ -28,11 +28,11 @@ These reminders are intentional; use the linked documents for full specification
 ## Working loop
 
 1. Read relevant code and design files. Check pending decisions before implementing unresolved behavior.
-2. Update the contract, implementation, and OpenAPI together. Keep routes thin; isolate validation, authorization, services, and persistence. OpenAPI documents implemented routes only.
+2. Update the implementation and OpenAPI together. Keep routes thin; isolate validation, authorization, services, and persistence. OpenAPI documents implemented routes only.
 3. Verify device ownership, jurisdiction boundaries, scoped counts/pagination, conditional requests, 201 `Location`, and shared rate-limit responses when implementing those features.
 4. For installation writes, verify admin-only access, allowed fields, duplicate meters, repeat activation/deactivation, inactive-device rejection, restored device access without extending token expiry, retained history, summary/cache changes, and stale tokens. Check optional If-Match, no-op PATCH ETags, atomic stale-write rejection, empty deletion, repeat-delete 404, the 412-before-409 ordering, and concurrent ingestion/deletion without orphaned readings.
 5. Keep secrets out of source control. Claim deployment or verification only after checking it; distinguish local checks from live evidence.
 
 ## Documentation maintenance
 
-Keep operational instructions in the README, schemas/access/persistence in the architecture, HTTP details in the API design rules, and rationale in decisions. Link to the owning document instead of copying full specifications. Prefer existing documents and sections over adding Markdown files for individual features.
+Keep operational instructions in the README, schemas/access/persistence in the architecture, endpoint contracts in OpenAPI, common HTTP conventions in the API design rules, and rationale in decisions. Link to the owning document instead of copying full specifications. Prefer existing documents and sections over adding Markdown files for individual features.

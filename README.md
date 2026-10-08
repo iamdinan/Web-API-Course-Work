@@ -67,7 +67,7 @@ The default local base URL is `http://localhost:3000/api/v1.0`. Append the paths
 
 Open [Swagger UI](http://localhost:3000/api/v1.0/docs) to try requests and view schemas. Adjust the URL if you change the port or prefix.
 
-Use a user token for protected reads, the installation's device token to submit readings, and an admin token to manage installations. Send tokens as `Authorization: Bearer <access_token>`. See the [API design rules](docs/API_DESIGN_RULES.md) for request fields, query parameters, access rules and caching.
+Use a user token for protected reads, the installation's device token to submit readings, and an admin token to manage installations. Send tokens as `Authorization: Bearer <access_token>`. See [OpenAPI](docs/openapi.json) for request fields, query parameters, access rules and caching.
 
 `/health` returns 200 when MongoDB responds and 503 when it is unavailable.
 
@@ -100,7 +100,7 @@ All credential pairs are required on each run. Existing accounts keep their pass
 
 ## Manual verification
 
-Use Swagger UI with a separate development database to try the API. The [API design rules](docs/API_DESIGN_RULES.md) describe the expected responses and access restrictions.
+Use Swagger UI with a separate development database to try the API. [OpenAPI](docs/openapi.json) describes the expected responses and access restrictions.
 
 ## Documentation
 
@@ -108,7 +108,7 @@ Use Swagger UI with a separate development database to try the API. The [API des
 | --- | --- |
 | [Conceptual data model](docs/data-model-reference.md) | Domain entities and relationships |
 | [Architecture](docs/architecture.md) | Stored data, access and persistence |
-| [API design rules](docs/API_DESIGN_RULES.md) | HTTP behavior and response contracts |
+| [API design rules](docs/API_DESIGN_RULES.md) | Common REST API conventions |
 | [OpenAPI](docs/openapi.json) | Endpoint and schema reference |
 | [Design decisions](docs/decisions.md) | Rationale and unresolved issues |
 | [AGENTS.md](AGENTS.md) | Coding-agent instructions |

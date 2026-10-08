@@ -1,6 +1,6 @@
 # Design Decisions
 
-This file records choices, their reasons, and unresolved questions. Concrete schemas and operations live in [architecture.md](architecture.md), HTTP behavior in [API_DESIGN_RULES.md](API_DESIGN_RULES.md), and seed operations in the [README](../README.md#sample-data).
+This file records choices, their reasons, and unresolved questions. Concrete schemas and operations live in [architecture.md](architecture.md), endpoint contracts in [OpenAPI](openapi.json), and seed operations in the [README](../README.md#sample-data).
 
 ## D01 — Hierarchy and public IDs
 
@@ -20,7 +20,7 @@ Derive latest readings, overviews and summaries from history. Current power excl
 
 ## D05 — URI and HTTP contract
 
-Use versioned JSON resources, bounded pagination, one error schema and stable validators under the [HTTP contract](API_DESIGN_RULES.md). Versioning allows coexistence; Location/conditional requests support navigation/caching without unreliable modification times.
+Use versioned JSON resources, bounded pagination, one error schema and stable validators under the [OpenAPI contract](openapi.json). Versioning allows coexistence; Location/conditional requests support navigation/caching without unreliable modification times.
 
 ## D06 — Shared rate limits
 
@@ -28,7 +28,7 @@ Use shared counters and [architecture thresholds](architecture.md#rate-limits): 
 
 ## D07 — Admin role and installation lifecycle
 
-Admin is a User role with national reads and limited installation creation, activation/deactivation and guarded hard deletion; no user management, general edits or reading writes. Preserve history and geographic attribution; reserve inactive meters. Shared transactional parent writes prevent orphan readings; new replacement UUIDs exclude old tokens. Optional strong If-Match protects stale writes without requiring conditional clients. Controlled setup/current roles avoid public registration and stale privileges. Current [HTTP](API_DESIGN_RULES.md#caching-and-access) and [persistence](architecture.md#admin-installation-management) details have one owner.
+Admin is a User role with national reads and limited installation creation, activation/deactivation and guarded hard deletion; no user management, general edits or reading writes. Preserve history and geographic attribution; reserve inactive meters. Shared transactional parent writes prevent orphan readings; new replacement UUIDs exclude old tokens. Optional strong If-Match protects stale writes without requiring conditional clients. Controlled setup/current roles avoid public registration and stale privileges. Current [HTTP](openapi.json) and [persistence](architecture.md#admin-installation-management) details have one owner.
 
 ## D08 — Environment configuration and health
 
@@ -68,7 +68,7 @@ Share cryptographic verification but separately reload current installation stat
 
 ## D17 - Transactional device reading submission
 
-Insert readings with a real shared parent write in the transaction: authentication alone cannot stop concurrent lifecycle changes, snapshot-only checks can orphan history. Timestamp uniqueness prevents overwrites. Explicit zones/millisecond validation preserve BSON identity. [HTTP rules](API_DESIGN_RULES.md#device-reading-submission) own validation.
+Insert readings with a real shared parent write in the transaction: authentication alone cannot stop concurrent lifecycle changes, snapshot-only checks can orphan history. Timestamp uniqueness prevents overwrites. Explicit zones/millisecond validation preserve BSON identity. [OpenAPI](openapi.json) documents validation.
 
 ## D18 - Individual reading access and validators
 
@@ -124,7 +124,7 @@ Reuse province access/current district ancestry for province detail and nested d
 
 ## D31 - Observed district generation summary (approved 2026-10-08)
 
-Use observed daily energy without interpolation or estimates so gaps and counter decreases do not imply invented generation. Retain observed contributions and flag incomplete installations; the seven fields expose both freshness and energy completeness. Exact rules belong to the [HTTP contract](API_DESIGN_RULES.md#district-generation-summary). Capture time once across snapshot retries; current power needs inclusive freshness and excludes inactive sites, while energy retains history. Time advances can change a full-summary ETag without ingestion. Readable Sri Lankan asOf text avoids a second timestamp field; calculations retain full precision and ETag tracks displayed time and values.
+Use observed daily energy without interpolation or estimates so gaps and counter decreases do not imply invented generation. Retain observed contributions and flag incomplete installations; the seven fields expose both freshness and energy completeness. Exact rules belong to the [OpenAPI contract](openapi.json). Capture time once across snapshot retries; current power needs inclusive freshness and excludes inactive sites, while energy retains history. Time advances can change a full-summary ETag without ingestion. Readable Sri Lankan asOf text avoids a second timestamp field; calculations retain full precision and ETag tracks displayed time and values.
 
 ## D32 - Nested substation installation list
 
@@ -136,7 +136,7 @@ Use current stored admin role, independent device secrets, shared scrypt/models/
 
 ## D34 - Transactional installation deactivation
 
-Initial PATCH allowed only inactive; D35 supersedes that restriction. Compare optional strong If-Match inside snapshot/majority transaction and force a real parent write even for no-ops, retrying all checks. Ingestion already writes that parent: serialization prevents post-deactivation commits and stale successful comparisons surviving concurrent changes. Unchanged public fields retain their ETag; shared HTTP rules own preconditions.
+Initial PATCH allowed only inactive; D35 supersedes that restriction. Compare optional strong If-Match inside snapshot/majority transaction and force a real parent write even for no-ops, retrying all checks. Ingestion already writes that parent: serialization prevents post-deactivation commits and stale successful comparisons surviving concurrent changes. Unchanged public fields retain their ETag; [OpenAPI](openapi.json) documents preconditions.
 
 ## D35 - Admin reactivation (approved 2026-10-08)
 
@@ -144,7 +144,7 @@ Inactive blocks devices indefinitely until explicit admin reactivation; status P
 
 ## D36 - Guarded installation hard deletion
 
-Reuse installationForWrite/precondition utilities and shared admin budget for bodyless deletion of empty active/inactive installations. Compare precondition, force parent write, then check history/delete in one transaction; retries repeat all checks. Separate/snapshot-only guards can orphan readings. Earlier ingestion blocks deletion; earlier deletion blocks reading commit. Preconditions precede history conflict. New replacement UUIDs exclude old tokens. [HTTP rules](API_DESIGN_RULES.md#installation-deletion) own responses/body framing; [architecture](architecture.md#admin-installation-management) owns persistence, README manual checks.
+Reuse installationForWrite/precondition utilities and shared admin budget for bodyless deletion of empty active/inactive installations. Compare precondition, force parent write, then check history/delete in one transaction; retries repeat all checks. Separate/snapshot-only guards can orphan readings. Earlier ingestion blocks deletion; earlier deletion blocks reading commit. Preconditions precede history conflict. New replacement UUIDs exclude old tokens. [OpenAPI](openapi.json) documents responses/body framing; [architecture](architecture.md#admin-installation-management) owns persistence.
 
 ## D37 - Complete scoped province list
 

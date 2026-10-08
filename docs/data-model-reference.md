@@ -1,6 +1,6 @@
 # Solar Generation Data Model — Conceptual Reference
 
-This project reference describes domain entities and relationships independently of database fields and HTTP endpoints. See [architecture.md](architecture.md) for stored schemas and access design, and [API_DESIGN_RULES.md](API_DESIGN_RULES.md) for the HTTP contract.
+This project reference describes domain entities and relationships independently of database fields and HTTP endpoints. See [architecture.md](architecture.md) for stored schemas and access design, and [OpenAPI](openapi.json) for endpoint contracts.
 
 ```mermaid
 erDiagram
