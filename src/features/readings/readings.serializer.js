@@ -1,14 +1,6 @@
 const { createHash } = require("node:crypto");
 
-const displayTime = new Intl.DateTimeFormat("en-GB", {
-  timeZone: "Asia/Colombo", day: "2-digit", month: "short", year: "numeric",
-  hour: "2-digit", minute: "2-digit", hourCycle: "h12",
-});
-
-function displayTimestamp(value) {
-  const parts = Object.fromEntries(displayTime.formatToParts(new Date(value)).map(part => [part.type, part.value]));
-  return `${parts.day} ${parts.month} ${parts.year}, ${parts.hour}:${parts.minute} ${parts.dayPeriod.toUpperCase()} (Sri Lanka)`;
-}
+const { displayTimestamp } = require("../../utils/timestamps");
 
 function readingBody(document) {
   const value = document.toJSON();

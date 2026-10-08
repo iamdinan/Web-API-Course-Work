@@ -13,4 +13,23 @@ function parseRecordedAt(value) {
   return Number.isFinite(date.getTime()) ? date : null;
 }
 
-module.exports = { parseRecordedAt };
+const colomboOffsetMs = 330 * 60 * 1000;
+function colomboTimestamp(value) {
+  return new Date(new Date(value).getTime() + colomboOffsetMs).toISOString().replace("Z", "+05:30");
+}
+function colomboDayStart(value) {
+  const local = new Date(new Date(value).getTime() + colomboOffsetMs);
+  return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate()) - colomboOffsetMs);
+}
+
+const displayTime = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Asia/Colombo", day: "2-digit", month: "short", year: "numeric",
+  hour: "2-digit", minute: "2-digit", hourCycle: "h12",
+});
+
+function displayTimestamp(value) {
+  const parts = Object.fromEntries(displayTime.formatToParts(new Date(value)).map(part => [part.type, part.value]));
+  return `${parts.day} ${parts.month} ${parts.year}, ${parts.hour}:${parts.minute} ${parts.dayPeriod.toUpperCase()} (Sri Lanka)`;
+}
+
+module.exports = { parseRecordedAt, colomboTimestamp, colomboDayStart, displayTimestamp };

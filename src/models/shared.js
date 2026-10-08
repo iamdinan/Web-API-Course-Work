@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const { randomUUID } = require("node:crypto");
+const { colomboTimestamp } = require("../utils/timestamps");
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -41,8 +42,7 @@ function createSchema(fields) {
         for (const field of ["recordedAt", "receivedAt"]) {
           if (result[field] instanceof Date) {
             // Preserve the instant while displaying Asia/Colombo (UTC+05:30).
-            result[field] = new Date(result[field].getTime() + 330 * 60 * 1000)
-              .toISOString().replace("Z", "+05:30");
+            result[field] = colomboTimestamp(result[field]);
           }
         }
         return result;

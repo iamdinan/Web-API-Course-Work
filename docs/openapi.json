@@ -2952,6 +2952,186 @@
           }
         }
       }
+    },
+    "/summarize-district-generation": {
+      "get": {
+        "operationId": "summarizeDistrictGeneration",
+        "summary": "Summarize current power and observed daily energy for an authorized district",
+        "description": "Require current user authentication (installation tokens 401) and shared 120/minute User read limits. Accept exactly one required public UUID v4 districtId query parameter and no other options; missing/invalid/repeated parameters return 400. Missing district or ancestry returns 404; authorize national/admin, assigned province or assigned district before aggregate queries or validators. Capture asOf once per request, including transaction retries. Current power sums each active installation latest recordedAt at or before asOf, if within the inclusive 30-minute freshness window; active installations without eligible readings count as stale. Use Asia/Colombo midnight through asOf inclusive for energy. todayEnergyKwh is observed daily energy that may be incomplete: sum nonnegative consecutive counter differences per installation, including inactive history, skipping decreases and resuming from each lower counter. Use an exact midnight baseline if available; otherwise start at the first in-day sample and flag incomplete. No interpolation, extrapolation, pre-midnight baseline or estimation. Fewer than two daily readings, missing midnight baseline or any decrease counts that installation as incomplete once. Empty districts return zero totals/counts. Read ancestry, status and history in one snapshot. ETag covers current principal and complete response including asOf; private, no-cache. The asOf field uses DD Mon YYYY, hh:mm AM/PM (Sri Lanka), while calculations retain full precision. ETag changes when the displayed timestamp or calculated values change, including freshness expiry and midnight without new readings. Matching If-None-Match yields bodyless 304 only after access/rate checks. Omit Last-Modified; If-Modified-Since alone returns 200. Errors are no-store without validators.",
+        "security": [
+          {
+            "UserBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "districtId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Strong/weak matching tag, quoted tag list, or * returns bodyless 304 after authorization. Takes precedence over If-Modified-Since."
+          },
+          {
+            "name": "If-Modified-Since",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Ignored because no reliable change time covers this time-dependent summary; alone returns 200."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Public district summary, with possibly incomplete observed daily energy",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ScopedETag"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DistrictGenerationSummary"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Authorized complete summary including asOf unchanged; no body or Content-Type",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ScopedETag"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              }
+            }
+          },
+          "400": {
+            "description": "Missing, invalid or repeated districtId, or unsupported query parameters (INVALID_QUERY).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or installation token, or deleted/invalid user (UNAUTHORIZED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "WWW-Authenticate": {
+                "$ref": "#/components/headers/BearerChallenge"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "District outside stored jurisdiction (FORBIDDEN).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "FORBIDDEN",
+                  "message": "The district is outside your permitted jurisdiction.",
+                  "details": []
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Missing district or province ancestry (NOT_FOUND).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "NOT_FOUND",
+                  "message": "District not found.",
+                  "details": []
+                }
+              }
+            }
+          },
+          "406": {
+            "$ref": "#/components/responses/NotAcceptable"
+          },
+          "429": {
+            "description": "Shared user-read limit exceeded (RATE_LIMIT_EXCEEDED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/LoginRetryAfter"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected persistence failure (INTERNAL_SERVER_ERROR).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3426,6 +3606,55 @@
             "items": {
               "$ref": "#/components/schemas/District"
             }
+          }
+        }
+      },
+      "DistrictGenerationSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "districtId",
+          "asOf",
+          "freshInstallationCount",
+          "staleInstallationCount",
+          "currentPowerKw",
+          "todayEnergyKwh",
+          "incompleteEnergyInstallationCount"
+        ],
+        "properties": {
+          "districtId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "asOf": {
+            "type": "string",
+            "description": "Once-captured request time displayed in Asia/Colombo as DD Mon YYYY, hh:mm AM/PM (Sri Lanka). Calculations retain full millisecond precision; display is minute precision.",
+            "example": "08 Oct 2026, 12:00 PM (Sri Lanka)"
+          },
+          "freshInstallationCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Active installations with a latest eligible reading within 30 minutes inclusive."
+          },
+          "staleInstallationCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Other active installations, including those without readings at or before asOf."
+          },
+          "currentPowerKw": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Sum of latest fresh active-installation powerKw."
+          },
+          "todayEnergyKwh": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Observed daily energy that may be incomplete. Sum nonnegative consecutive cumulative-counter differences from local midnight through asOf; no estimation or interpolation. Includes inactive history."
+          },
+          "incompleteEnergyInstallationCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Active or inactive installations with missing midnight baseline, fewer than two daily readings, or counter decreases; each installation counted once."
           }
         }
       }

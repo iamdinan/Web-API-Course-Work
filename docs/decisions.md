@@ -168,11 +168,20 @@ This file records choices, their reasons, and unresolved questions. Concrete sch
 - **Choice:** Reuse the province access helper for province detail and province-district collection reads. Resolve district analysts' current stored district ancestry in the same snapshot as the requested province. Return only id/name without collections or query options.
 - **Reason:** Province access depends on current ancestry, not token claims; missing/broken assignments must fail closed before cache validators. A scoped public-response ETag supports conditional reads. Omit Last-Modified because province metadata has no reliable change timestamp.
 
+## D31 - Observed district generation summary (approved 2026-10-08)
+
+- **Choice:** Return districtId, asOf, freshInstallationCount, staleInstallationCount, currentPowerKw, todayEnergyKwh and incompleteEnergyInstallationCount. Capture asOf once per request and retain it across snapshot retries. Current power uses the latest recordedAt at or before asOf for each active installation; the inclusive freshness threshold is 30 minutes. Active installations without eligible readings count as stale. Inactive installations participate only in energy/incompleteness.
+- **Energy:** todayEnergyKwh is observed daily energy that may be incomplete. Use only readings from Asia/Colombo midnight through asOf inclusive. Start from an exact midnight reading when present; otherwise start at the first in-day reading and mark incomplete. Sum nonnegative consecutive counter differences; skip decreases, mark incomplete, then resume differences from the lower observed counter. Never assume a zero reset, use a pre-midnight counter, interpolate or estimate unobserved intervals.
+- **Incomplete:** Count each installation once if it has fewer than two in-day readings, lacks an exact midnight baseline, or has any counter decrease. Keep its usable observed contributions. A valid midnight baseline and subsequent readings without decreases suffice; no sampling-cadence or end-of-day completeness is inferred. Empty districts return all zero totals/counts; installations without readings have zero energy and count as incomplete (and stale if active).
+- **Caching:** ETag covers the authorized complete summary including readable asOf. Time advances can change the representation without ingestion, so reading-only ETags are unsuitable. Use private, no-cache; authorize and apply shared limits before conditional responses. Omit Last-Modified. Equal complete representations may return bodyless 304 within the displayed minute; freshness expiry still changes calculated values at full precision.
+- **Approval:** User approved the proposed field names/calculation rules and explicitly required observed energy without estimation or midnight interpolation. This resolves the earlier pending baseline/reset and response decisions. See the [HTTP contract](API_DESIGN_RULES.md#district-generation-summary).
+
+- **Timestamp display correction:** User requested replacing asOf with readable text, rather than adding a second field. Reuse the existing reading display format: `08 Oct 2026, 12:00 PM (Sri Lanka)`. The internal once-captured time retains millisecond precision for all calculations; ETag tracks the displayed timestamp and complete values.
+
 ## Pending decisions
 
 | Topic | Decision needed |
 | --- | --- |
 | Measurement validation | Set meter clock-drift and measurement bounds. |
-| Energy counter resets | Finalize reset/baseline behavior for district energy calculations. |
 | Deployment | Choose the deployment provider and HTTPS configuration. |
 | Rate thresholds | Confirm or revise thresholds for remaining traffic classes; user/device token issuance uses 5 attempts/15 minutes and protected user reads use 120/minute, and device ingestion uses the initial 30/minute per installation and IP. |

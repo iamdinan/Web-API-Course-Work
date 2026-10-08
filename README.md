@@ -6,7 +6,7 @@ A Node.js/Express API backed by Mongoose and MongoDB Atlas for solar generation 
 
 ## Current implementation
 
-The application currently provides public `/health` and `/openapi.json`, user/admin login at `POST /auth/user-tokens`, device login at `POST /auth/device-tokens`, protected `GET /provinces`, `GET /readings`, `GET /installations/{installationId}/readings`, `GET /installations/{installationId}/readings/{readingId}`, `GET /installations/{installationId}/last-reading`, `GET /installations/{installationId}/overview`, `GET /installations/{installationId}`, `GET /installations`, `GET /grid-substations/{substationId}`, `GET /districts/{districtId}/grid-substations`, `GET /districts/{districtId}`, `GET /provinces/{provinceId}/districts`, and `GET /provinces/{provinceId}`, six data models, the full dataset seed, and controlled user seeding. Login and protected reads use shared MongoDB limits. Installation JWT verification and URL ownership protect `POST /installations/{installationId}/readings`, with transactional active-status checks and shared device-write limits. Remaining resource endpoints, Swagger UI, database readiness, and other traffic limits remain planned. The architecture describes the target API; OpenAPI describes implemented routes only.
+The application currently provides public `/health` and `/openapi.json`, user/admin login at `POST /auth/user-tokens`, device login at `POST /auth/device-tokens`, protected `GET /provinces`, `GET /readings`, `GET /installations/{installationId}/readings`, `GET /installations/{installationId}/readings/{readingId}`, `GET /installations/{installationId}/last-reading`, `GET /installations/{installationId}/overview`, `GET /installations/{installationId}`, `GET /installations`, `GET /grid-substations/{substationId}`, `GET /districts/{districtId}/grid-substations`, `GET /districts/{districtId}`, `GET /provinces/{provinceId}/districts`, `GET /provinces/{provinceId}`, and `GET /summarize-district-generation`, six data models, the full dataset seed, and controlled user seeding. Login and protected reads use shared MongoDB limits. Installation JWT verification and URL ownership protect `POST /installations/{installationId}/readings`, with transactional active-status checks and shared device-write limits. Remaining resource endpoints, Swagger UI, database readiness, and other traffic limits remain planned. The architecture describes the target API; OpenAPI describes implemented routes only.
 
 ## Getting started
 
@@ -43,6 +43,19 @@ Startup connects to MongoDB before opening the HTTP listener. Watch for `MongoDB
 | `npm run seed` | Insert the full sample dataset into the configured database |
 | `npm run seed:users` | Insert and verify the 36 configured accounts without changing existing users |
 
+## District summary manual checks
+
+Send a user/admin token and a real public district UUID. See the [summary HTTP contract](docs/API_DESIGN_RULES.md#district-generation-summary). todayEnergyKwh is observed daily energy that may be incomplete; inspect incompleteEnergyInstallationCount. Inactive history contributes energy, while only active fresh readings contribute current power.
+
+```powershell
+$summaryUrl = "$base/api/v1.0/summarize-district-generation?districtId=$districtId"
+$response = Invoke-WebRequest $summaryUrl -Headers @{ Authorization = "Bearer $userToken" }
+$response.Content
+curl.exe -i $summaryUrl -H "Authorization: Bearer $userToken" -H 'If-None-Match: *'
+```
+
+The first request returns 200 with the seven public summary fields. The wildcard conditional request returns bodyless 304 after authorization; a saved specific ETag returns 200 when the displayed asOf minute or any calculated value changes. asOf uses readable Sri Lanka text, such as `08 Oct 2026, 12:00 PM (Sri Lanka)`, while calculations retain full precision. National/admin and authorized provincial/district tokens return 200; outside jurisdiction returns 403, an installation token 401, missing/invalid districtId 400, an unused valid district UUID 404, and unsupported or repeated query parameters 400. An empty district returns zero totals/counts. If-Modified-Since alone returns 200. Tests use controlled clocks to verify exact freshness and midnight boundaries; the fixed seed's historical dates may produce stale power on current dates.
+
 ## API endpoints
 
 Append the paths below to your API base URL. Use your deployed HTTPS host with the configured prefix, for example `https://<your-host>/api/v1.0`. If the app runs locally, use `http://localhost:3000/api/v1.0` (adjust the port or prefix if configured).
@@ -54,6 +67,7 @@ Append the paths below to your API base URL. Use your deployed HTTPS host with t
 | POST | `/auth/user-tokens` | Obtain a user/admin access token |
 | POST | `/auth/device-tokens` | Obtain an installation access token |
 | GET | `/provinces` | List provinces visible to the authenticated user |
+| GET | `/summarize-district-generation?districtId=...` | Current fresh power and observed daily energy within an authorized district |
 | GET | `/provinces/{provinceId}` | Retrieve public province details within the user's jurisdiction |
 | GET | `/provinces/{provinceId}/districts` | List authorized districts within a province |
 | GET | `/districts/{districtId}` | Retrieve public district details within the user's jurisdiction |

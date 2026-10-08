@@ -2200,3 +2200,191 @@ test("OpenAPI province detail documents public fields, conditional GET and no qu
   assert.deepEqual(spec.components.schemas.Province.required,["id","name"]);
   assert.equal(spec.components.schemas.Province.additionalProperties,false);
 });
+
+
+const { summaryClock } = require("../src/features/district-summary/district-summary.controller");
+function districtSummary(access, id, headers = {}, suffix = "") {
+  return rawGet(`/summarize-district-generation?districtId=${id}${suffix}`, access, headers);
+}
+function summaryTime(t, value = "2026-10-08T12:00:00+05:30") {
+  t.mock.method(summaryClock, "now", () => new Date(value));
+}
+async function summarySamples(id, samples) {
+  return models.GenerationReading.create(samples.map(([recordedAt, energyKwh, powerKw = 1, receivedAt = recordedAt]) => ({
+    installationId: id, recordedAt: new Date(recordedAt), energyKwh, powerKw, voltageV:230, receivedAt:new Date(receivedAt),
+  })));
+}
+async function summaryInstallation(status = "active") {
+  const parent = await models.GridSubstation.findOne({});
+  return models.SolarInstallation.create({ substationId:parent.publicId, meterId:randomUUID(), status, deviceCredentialHash:"fixture-only" });
+}
+
+integration("district summary authorizes all access levels and denies foreign scope before aggregate queries", async t => {
+  summaryTime(t);
+  const local = await models.District.findOne({});
+  for (const fields of [{}, { role:"admin" }, { readScope:"province",provinceId:local.provinceId }, { readScope:"district",districtId:local.publicId }]) {
+    const { access } = await analyst(fields);
+    const result = await districtSummary(access,local.publicId);
+    assert.equal(result.status,200);
+    assert.deepEqual(result.body,{ districtId:local.publicId,asOf:"08 Oct 2026, 12:00 PM (Sri Lanka)",freshInstallationCount:0,staleInstallationCount:1,currentPowerKw:0,todayEnergyKwh:0,incompleteEnergyInstallationCount:1 });
+  }
+  const foreignProvince = await models.Province.create({ name:"Foreign" });
+  const foreign = await models.District.create({ provinceId:foreignProvince.publicId,name:"Foreign" });
+  const sibling = await models.District.create({ provinceId:local.provinceId,name:"Sibling" });
+  const { access:provincial } = await analyst({ readScope:"province",provinceId:local.provinceId });
+  const { access:district } = await analyst({ readScope:"district",districtId:local.publicId });
+  t.mock.method(models.GridSubstation,"find",()=>{ throw Error("Must authorize before child queries"); });
+  t.mock.method(models.GenerationReading,"aggregate",()=>{ throw Error("Must authorize before aggregation"); });
+  t.mock.method(models.GenerationReading,"find",()=>{ throw Error("Must authorize before history queries"); });
+  for(const [access,id] of [[provincial,foreign.publicId],[district,foreign.publicId],[district,sibling.publicId]]) {
+    const result = await districtSummary(access,id,{ "If-None-Match":"*" });
+    assert.equal(result.status,403); assert.equal(result.headers.etag,undefined); assert.equal(result.headers["cache-control"],"no-store");
+    assert.equal(result.body.todayEnergyKwh,undefined);
+  }
+});
+
+integration("district summary rejects device tokens, invalid/missing/repeated query IDs and missing ancestry before validators", async t => {
+  summaryTime(t);
+  const local = await models.District.findOne({});
+  const { access } = await analyst();
+  for(const auth of [null,"invalid",token()]) {
+    const result = await districtSummary(auth,local.publicId,{ "If-None-Match":"*" });
+    assert.equal(result.status,401); assert.equal(result.headers["www-authenticate"],"Bearer"); assert.equal(result.headers.etag,undefined);
+  }
+  for(const query of ["", "?districtId=", "?districtId=bad", "?districtId="+local.publicId+"&districtId="+local.publicId,
+    "?districtId="+local.publicId+"&limit=1", "?districtId="+local.publicId.replace(/^(.{14})4/,(_,prefix)=>prefix+"1")]) {
+    const result = await rawGet('/summarize-district-generation'+query,access,{ "If-None-Match":"*" });
+    assert.equal(result.status,400); assert.equal(result.headers.etag,undefined); assert.equal(result.headers["cache-control"],"no-store");
+  }
+  assert.equal((await districtSummary(access,randomUUID(),{ "If-None-Match":"*" })).status,404);
+  await models.Province.collection.deleteOne({ publicId:local.provinceId });
+  assert.equal((await districtSummary(access,local.publicId,{ "If-None-Match":"*" })).status,404);
+});
+
+integration("summary current power uses latest recordedAt, inclusive freshness, excludes stale/inactive/future and foreign data", async t => {
+  summaryTime(t);
+  const local = await models.District.findOne({});
+  await summarySamples(installationId,[
+    ["2026-10-08T11:40:00+05:30",1,90,"2026-10-08T12:00:00+05:30"],
+    ["2026-10-08T11:50:00+05:30",2,3,"2026-10-08T11:51:00+05:30"],
+    ["2026-10-08T12:01:00+05:30",3,100],
+  ]);
+  const boundary = await summaryInstallation();
+  const stale = await summaryInstallation();
+  const inactive = await summaryInstallation("inactive");
+  const futureOnly = await summaryInstallation();
+  await summarySamples(boundary.publicId,[["2026-10-08T11:30:00+05:30",1,4]]);
+  await summarySamples(stale.publicId,[["2026-10-08T11:29:59.999+05:30",1,50]]);
+  await summarySamples(inactive.publicId,[["2026-10-08T00:00:00+05:30",10,0],["2026-10-08T11:59:00+05:30",15,70]]);
+  await summarySamples(futureOnly.publicId,[["2026-10-08T12:01:00+05:30",1,80]]);
+  const foreignDistrict = await models.District.create({ name:"Other district",provinceId:local.provinceId });
+  const foreignSubstation = await models.GridSubstation.create({ name:"Other substation",districtId:foreignDistrict.publicId });
+  const foreignInstallation = await models.SolarInstallation.create({ substationId:foreignSubstation.publicId,meterId:randomUUID(),deviceCredentialHash:"fixture-only" });
+  await summarySamples(foreignInstallation.publicId,[["2026-10-08T00:00:00+05:30",0,0],["2026-10-08T12:00:00+05:30",1000,1000]]);
+  const { access } = await analyst();
+  const result = await districtSummary(access,local.publicId);
+  assert.equal(result.status,200); assert.equal(result.body.currentPowerKw,7);
+  assert.equal(result.body.freshInstallationCount,2); assert.equal(result.body.staleInstallationCount,2);
+  assert.equal(result.body.todayEnergyKwh,6); assert.equal(result.body.incompleteEnergyInstallationCount,4);
+});
+
+integration("summary observes daily differences without pre-midnight baselines, interpolation or estimates", async t => {
+  summaryTime(t);
+  const local = await models.District.findOne({});
+  await summarySamples(installationId,[["2026-10-07T23:59:00+05:30",80],["2026-10-08T00:10:00+05:30",100],
+    ["2026-10-08T01:00:00+05:30",103],["2026-10-08T11:00:00+05:30",110],["2026-10-08T13:00:00+05:30",999]]);
+  const complete = await summaryInstallation("inactive");
+  await summarySamples(complete.publicId,[["2026-10-08T00:00:00+05:30",200],["2026-10-08T06:00:00+05:30",204]]);
+  const one = await summaryInstallation();
+  await summarySamples(one.publicId,[["2026-10-08T00:00:00+05:30",500]]);
+  await summaryInstallation(); // zero readings: insufficient, counted once
+  const { access } = await analyst();
+  const result = await districtSummary(access,local.publicId);
+  assert.equal(result.body.todayEnergyKwh,14); assert.equal(result.body.incompleteEnergyInstallationCount,3);
+});
+
+integration("summary skips decreases, resumes differences from lower counters and counts each incomplete installation once", async t => {
+  summaryTime(t);
+  const local = await models.District.findOne({});
+  await summarySamples(installationId,[["2026-10-08T00:00:00+05:30",100],["2026-10-08T01:00:00+05:30",105],
+    ["2026-10-08T02:00:00+05:30",2],["2026-10-08T03:00:00+05:30",5],
+    ["2026-10-08T04:00:00+05:30",1],["2026-10-08T05:00:00+05:30",5]]);
+  const missingAndReset = await summaryInstallation("inactive");
+  await summarySamples(missingAndReset.publicId,[["2026-10-08T01:00:00+05:30",50],["2026-10-08T02:00:00+05:30",2],["2026-10-08T03:00:00+05:30",4]]);
+  const flat = await summaryInstallation();
+  await summarySamples(flat.publicId,[["2026-10-08T00:00:00+05:30",20],["2026-10-08T02:00:00+05:30",20]]);
+  const { access } = await analyst();
+  const result = await districtSummary(access,local.publicId);
+  assert.equal(result.body.todayEnergyKwh,14); assert.equal(result.body.incompleteEnergyInstallationCount,2);
+});
+
+integration("summary handles empty districts and time-driven midnight/freshness ETags with one captured clock per request", async t => {
+  let now = new Date("2026-10-08T23:59:59.999+05:30");
+  let captures = 0;
+  t.mock.method(summaryClock,"now",()=>{ captures++; return new Date(now); });
+  const local = await models.District.findOne({});
+  const empty = await models.District.create({ name:"Empty",provinceId:local.provinceId });
+  const { user,access } = await analyst();
+  const emptyResult = await districtSummary(access,empty.publicId);
+  assert.deepEqual(emptyResult.body,{ districtId:empty.publicId,asOf:"08 Oct 2026, 11:59 PM (Sri Lanka)",freshInstallationCount:0,staleInstallationCount:0,currentPowerKw:0,todayEnergyKwh:0,incompleteEnergyInstallationCount:0 });
+  await summarySamples(installationId,[["2026-10-08T00:00:00+05:30",10,0],["2026-10-08T23:30:00+05:30",15,3]]);
+  const first = await districtSummary(access,local.publicId);
+  assert.equal(first.body.currentPowerKw,3); assert.equal(first.body.todayEnergyKwh,5);
+  for(const value of [first.headers.etag,`W/${first.headers.etag}`,`"other", ${first.headers.etag}`,"*"]) {
+    const cached = await districtSummary(access,local.publicId,{ "If-None-Match":value });
+    assert.equal(cached.status,304); assert.equal(cached.text,""); assert.equal(cached.headers["content-type"],undefined);
+    assert.equal(cached.headers["cache-control"],"private, no-cache");
+  }
+  assert.equal(captures,6);
+  now = new Date("2026-10-09T00:00:00+05:30");
+  const midnight = await districtSummary(access,local.publicId,{ "If-None-Match":first.headers.etag });
+  assert.equal(midnight.status,200); assert.notEqual(midnight.headers.etag,first.headers.etag);
+  assert.equal(midnight.body.todayEnergyKwh,0); assert.equal(midnight.body.incompleteEnergyInstallationCount,1);
+  assert.equal(midnight.body.currentPowerKw,3); // exactly 30 minutes remains fresh
+  now = new Date(now.getTime()+1);
+  const expired = await districtSummary(access,local.publicId,{ "If-None-Match":midnight.headers.etag });
+  assert.equal(expired.status,200); assert.equal(expired.body.currentPowerKw,0); assert.equal(expired.body.staleInstallationCount,1);
+  assert.notEqual(expired.headers.etag,midnight.headers.etag); assert.equal(expired.headers["last-modified"],undefined);
+  assert.equal((await districtSummary(access,local.publicId,{ "If-Modified-Since":new Date("2099-01-01").toUTCString() })).status,200);
+  await models.SolarInstallation.updateOne({ publicId:installationId },{ $set:{ status:"inactive" } });
+  const inactive = await districtSummary(access,local.publicId,{ "If-None-Match":expired.headers.etag });
+  assert.equal(inactive.status,200); assert.equal(inactive.body.staleInstallationCount,0);
+  const outside = await models.District.create({ name:"Outside assignment",provinceId:local.provinceId });
+  await models.User.updateOne({ publicId:user.publicId },{ $set:{ readScope:"district",districtId:outside.publicId } });
+  assert.equal((await districtSummary(access,local.publicId,{ "If-None-Match":"*" })).status,403);
+});
+
+integration("summary ETag tracks readings at fixed time and shared limits/errors precede validators", async t => {
+  summaryTime(t);
+  const local = await models.District.findOne({});
+  const { user,access } = await analyst();
+  const first = await districtSummary(access,local.publicId);
+  await summarySamples(installationId,[["2026-10-08T00:00:00+05:30",10,0],["2026-10-08T11:59:00+05:30",13,2]]);
+  const changed = await districtSummary(access,local.publicId,{ "If-None-Match":first.headers.etag });
+  assert.equal(changed.status,200); assert.notEqual(changed.headers.etag,first.headers.etag);
+  const { createHash } = require("node:crypto");
+  await Counter.updateOne({ _id:`user-read:${createHash("sha256").update(user.publicId).digest("hex")}` },{ $set:{ count:119,expiresAt:new Date(Date.now()+60000) } });
+  assert.equal((await districtDetails(access,local.publicId)).status,200);
+  const limited = await districtSummary(access,local.publicId,{ "If-None-Match":"*" });
+  assert.equal(limited.status,429); assert.ok(Number(limited.headers["retry-after"])>0); assert.equal(limited.headers.etag,undefined);
+  const { access:another } = await analyst();
+  t.mock.method(models.GenerationReading,"aggregate",()=>{ throw Error("private diagnostics"); });
+  const failed = await districtSummary(another,local.publicId);
+  assert.equal(failed.status,500); assert.equal(failed.body.code,"INTERNAL_SERVER_ERROR");
+  assert.equal(failed.headers.etag,undefined); assert.equal(failed.headers["cache-control"],"no-store");
+});
+
+test("OpenAPI summary documents required UUID, observed energy and private time-dependent conditional GET", () => {
+  const spec = require("../docs/openapi.json");
+  const resource = spec.paths['/summarize-district-generation'];
+  assert.deepEqual(Object.keys(resource),["get"]); assert.deepEqual(resource.get.security,[{ UserBearer:[] }]);
+  const query = resource.get.parameters.filter(p=>p.in==="query");
+  assert.equal(query.length,1); assert.equal(query[0].name,"districtId"); assert.equal(query[0].required,true);
+  for(const status of [200,304,400,401,403,404,406,429,500]) assert.ok(resource.get.responses[status]);
+  assert.equal(resource.get.responses[304].content,undefined); assert.equal(resource.get.responses[200].headers['Last-Modified'],undefined);
+  const schema = spec.components.schemas.DistrictGenerationSummary;
+  assert.deepEqual(schema.required,["districtId","asOf","freshInstallationCount","staleInstallationCount","currentPowerKw","todayEnergyKwh","incompleteEnergyInstallationCount"]);
+  assert.equal(schema.additionalProperties,false); assert.equal(schema.properties.asOf.format,undefined);
+  assert.equal(schema.properties.asOf.example,"08 Oct 2026, 12:00 PM (Sri Lanka)");
+  assert.match(schema.properties.todayEnergyKwh.description,/observed.*incomplete/i);
+});
