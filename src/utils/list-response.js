@@ -1,6 +1,7 @@
 const { apiBaseUrl } = require("../config/env");
 
 function listBody(count, items, query, resource, filterKeys) {
+  if (!query) return { count, items };
   function link(offset) {
     const params = new URLSearchParams();
     for (const key of filterKeys) if (query[key] !== undefined) params.set(key, query[key]);

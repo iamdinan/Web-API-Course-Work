@@ -419,7 +419,7 @@ integration("reading GET authenticates users and validates both UUIDs before res
   }
   const { user, access } = await analyst();
   for (const [installation, reading] of [["invalid", created.body.id], [installationId, "invalid"],
-    [installationId.replace(/-4/, "-1"), created.body.id]]) {
+    [installationId.replace(/^(.{14})4/, (_, prefix) => prefix + "1"), created.body.id]]) {
     const response = await read(reading, access, installation, { "If-None-Match": "*" });
     assert.equal(response.status, 400);
     assert.equal(response.body.code, "INVALID_REQUEST");
@@ -1243,7 +1243,7 @@ integration("installation details authenticate user actors, validate public IDs,
     assert.equal(result.headers["last-modified"], undefined);
   }
   const { access } = await analyst();
-  for (const id of ["invalid", "507f1f77bcf86cd799439011", installationId.replace(/-4/, "-1")]) {
+  for (const id of ["invalid", "507f1f77bcf86cd799439011", installationId.replace(/^(.{14})4/, (_, prefix) => prefix + "1")]) {
     const result = await installationDetails(access, id, { "If-None-Match": "*" });
     assert.equal(result.status, 400);
     assert.equal(result.body.code, "INVALID_REQUEST");
@@ -1572,4 +1572,397 @@ test("OpenAPI installation collection exposes documented filters, envelope and G
   assert.equal(resource.get.responses[200].headers['Last-Modified'], undefined);
   assert.equal(resource.get.responses[200].content['application/json'].schema.$ref, '#/components/schemas/InstallationList');
   assert.equal(spec.components.schemas.InstallationList.properties.items.items.$ref, '#/components/schemas/SolarInstallation');
+});
+
+function substationDetails(access, id, headers = {}) {
+  return rawGet(`/grid-substations/${id}`, access, headers);
+}
+
+integration("substation details serve national/admin/province/district readers with exactly public fields", async () => {
+  const station = await models.GridSubstation.findOne({});
+  const district = await models.District.findOne({});
+  for (const fields of [{}, { role: "admin" }, { readScope: "province", provinceId: district.provinceId },
+    { readScope: "district", districtId: district.publicId }]) {
+    const { access } = await analyst(fields);
+    const result = await substationDetails(access, station.publicId);
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.body, { id: station.publicId, districtId: district.publicId, name: station.name });
+    assert.deepEqual(Object.keys(result.body), ["id", "districtId", "name"]);
+    assert.equal(result.headers["cache-control"], "private, no-cache");
+    assert.match(result.headers.etag, /^"[0-9a-f]{64}"$/);
+    assert.equal(result.headers["last-modified"], undefined);
+  }
+});
+
+integration("substation details reject foreign provinces/districts and sibling districts before validators", async () => {
+  const station = await models.GridSubstation.findOne({});
+  const local = await models.District.findOne({});
+  const { access: national } = await analyst();
+  const tag = (await substationDetails(national, station.publicId)).headers.etag;
+  const province = await models.Province.create({ name: "Foreign" });
+  const foreign = await models.District.create({ name: "Foreign", provinceId: province.publicId });
+  const sibling = await models.District.create({ name: "Sibling", provinceId: local.provinceId });
+  for (const fields of [{ readScope: "province", provinceId: province.publicId },
+    { readScope: "district", districtId: foreign.publicId }, { readScope: "district", districtId: sibling.publicId }]) {
+    const { access } = await analyst(fields);
+    const result = await substationDetails(access, station.publicId, { "If-None-Match": tag });
+    assert.equal(result.status, 403);
+    assert.deepEqual(result.body, { code: "FORBIDDEN", message: "The substation is outside your permitted jurisdiction.", details: [] });
+    assert.equal(result.headers["cache-control"], "no-store");
+    assert.equal(result.headers.etag, undefined);
+    assert.equal(result.headers["last-modified"], undefined);
+  }
+});
+
+integration("substation detail authenticates users, validates public IDs and fails closed on missing resources/ancestry", async () => {
+  const station = await models.GridSubstation.findOne({});
+  for (const access of [null, "invalid", token(), token({ actor: "user" }, { expiresIn: -1 })]) {
+    const result = await substationDetails(access, station.publicId, { "If-None-Match": "*" });
+    assert.equal(result.status, 401);
+    assert.equal(result.headers["www-authenticate"], "Bearer");
+    assert.equal(result.headers.etag, undefined);
+    assert.equal(result.headers["cache-control"], "no-store");
+  }
+  const { access } = await analyst();
+  for (const id of ["invalid", "507f1f77bcf86cd799439011", station.publicId.replace(/^(.{14})4/, (_, prefix) => prefix + "1")]) {
+    const result = await substationDetails(access, id, { "If-None-Match": "*" });
+    assert.equal(result.status, 400);
+    assert.equal(result.body.code, "INVALID_REQUEST");
+    assert.equal(result.headers.etag, undefined);
+  }
+  const missing = await substationDetails(access, randomUUID(), { "If-None-Match": "*" });
+  assert.equal(missing.status, 404);
+  assert.deepEqual(missing.body, { code: "NOT_FOUND", message: "Substation not found.", details: [] });
+  for (const model of [models.District, models.Province]) {
+    const saved = await model.collection.findOne({});
+    await model.collection.deleteOne({ _id: saved._id });
+    const result = await substationDetails(access, station.publicId, { "If-None-Match": "*" });
+    assert.equal(result.status, 404);
+    assert.equal(result.headers.etag, undefined);
+    await model.collection.insertOne(saved);
+  }
+});
+
+integration("substation conditional GET returns bodyless 304 and ETags track public metadata, not private fields", async () => {
+  const station = await models.GridSubstation.findOne({});
+  const { access } = await analyst();
+  const first = await substationDetails(access, station.publicId);
+  for (const value of [first.headers.etag, `W/${first.headers.etag}`, `"other", ${first.headers.etag}`, "*"]) {
+    const result = await substationDetails(access, station.publicId, { "If-None-Match": value });
+    assert.equal(result.status, 304);
+    assert.equal(result.text, "");
+    assert.equal(result.headers["content-type"], undefined);
+    assert.equal(result.headers.etag, first.headers.etag);
+    assert.equal(result.headers["cache-control"], "private, no-cache");
+    assert.equal(result.headers["last-modified"], undefined);
+  }
+  const future = new Date("2099-01-01").toUTCString();
+  assert.equal((await substationDetails(access, station.publicId, { "If-Modified-Since": future })).status, 200);
+  assert.equal((await substationDetails(access, station.publicId, { "If-None-Match": '"other"', "If-Modified-Since": future })).status, 200);
+  await models.GridSubstation.collection.updateOne({ publicId: station.publicId }, { $set: { __v: 99, privateField: "fixture-private" } });
+  assert.equal((await substationDetails(access, station.publicId, { "If-None-Match": first.headers.etag })).status, 304);
+  await models.GridSubstation.updateOne({ publicId: station.publicId }, { $set: { name: "Renamed" } });
+  const changed = await substationDetails(access, station.publicId, { "If-None-Match": first.headers.etag });
+  assert.equal(changed.status, 200);
+  assert.equal(changed.body.name, "Renamed");
+  assert.notEqual(changed.headers.etag, first.headers.etag);
+  assert.deepEqual(Object.keys(changed.body), ["id", "districtId", "name"]);
+});
+
+integration("substation GET rechecks stored jurisdiction and shared limits before 304 and sanitizes persistence failures", async t => {
+  const station = await models.GridSubstation.findOne({});
+  const { user, access } = await analyst();
+  const tag = (await substationDetails(access, station.publicId)).headers.etag;
+  const foreign = await models.Province.create({ name: "Changed assignment" });
+  await models.User.updateOne({ publicId: user.publicId }, { $set: { readScope: "province", provinceId: foreign.publicId } });
+  assert.equal((await substationDetails(access, station.publicId, { "If-None-Match": tag })).status, 403);
+  await models.User.deleteOne({ publicId: user.publicId });
+  assert.equal((await substationDetails(access, station.publicId, { "If-None-Match": tag })).status, 401);
+  const { user: admin, access: adminAccess } = await analyst({ role: "admin" });
+  const { createHash } = require("node:crypto");
+  await Counter.create({ _id: `user-read:${createHash("sha256").update(admin.publicId).digest("hex")}`,
+    count: 119, expiresAt: new Date(Date.now() + 60000) });
+  assert.equal((await installations(adminAccess)).status, 200);
+  const limited = await substationDetails(adminAccess, station.publicId, { "If-None-Match": tag });
+  assert.equal(limited.status, 429);
+  assert.ok(Number(limited.headers["retry-after"]) > 0);
+  assert.equal(limited.headers.etag, undefined);
+  assert.equal(limited.headers["cache-control"], "no-store");
+  const { access: another } = await analyst();
+  t.mock.method(models.GridSubstation, "findOne", () => { throw new Error("private diagnostics"); });
+  const failed = await substationDetails(another, station.publicId);
+  assert.equal(failed.status, 500);
+  assert.deepEqual(failed.body, { code: "INTERNAL_SERVER_ERROR", message: "An unexpected error occurred.", details: [] });
+  assert.equal(failed.headers["cache-control"], "no-store");
+  assert.equal(failed.headers.etag, undefined);
+});
+
+test("OpenAPI grid-substation detail documents public fields, user security and conditional GET only", () => {
+  const spec = require("../docs/openapi.json");
+  const resource = spec.paths['/grid-substations/{substationId}'];
+  assert.deepEqual(Object.keys(resource), ["get"]);
+  assert.deepEqual(resource.get.security, [{ UserBearer: [] }]);
+  assert.deepEqual(resource.get.parameters.filter(p => p.in === "path").map(p => p.name), ["substationId"]);
+  assert.equal(resource.get.parameters.some(p => p.in === "query"), false);
+  for (const status of [200, 304, 400, 401, 403, 404, 406, 429, 500]) assert.ok(resource.get.responses[status]);
+  assert.equal(resource.get.responses[304].content, undefined);
+  assert.equal(resource.get.responses[200].headers['Last-Modified'], undefined);
+  assert.equal(resource.get.responses[200].content['application/json'].schema.$ref, '#/components/schemas/GridSubstation');
+  assert.deepEqual(spec.components.schemas.GridSubstation.required, ["id", "districtId", "name"]);
+  assert.equal(spec.components.schemas.GridSubstation.additionalProperties, false);
+});
+
+function districtSubstations(access, id, headers = {}, query = "") {
+  return rawGet(`/districts/${id}/grid-substations${query}`, access, headers);
+}
+
+integration("district substation list authorizes all scopes and returns the full parent-filtered public collection in deterministic order", async () => {
+  const district = await models.District.findOne({});
+  const sibling = await models.District.create({ name: "Sibling", provinceId: district.provinceId });
+  await models.GridSubstation.create({ name: "Excluded", districtId: sibling.publicId });
+  const added = await models.GridSubstation.create(Array.from({ length: 51 }, (_, index) => ({
+    name: index % 2 ? "Alpha" : "Beta", districtId: district.publicId,
+  })));
+  const original = await models.GridSubstation.findOne({ name: "Test substation" });
+  const expected = [...added, original].sort((a, b) =>
+    a.name < b.name ? -1 : a.name > b.name ? 1 : a.publicId < b.publicId ? -1 : 1);
+  for (const fields of [{}, { role: "admin" }, { readScope: "province", provinceId: district.provinceId },
+    { readScope: "district", districtId: district.publicId }]) {
+    const { access } = await analyst(fields);
+    const result = await districtSubstations(access, district.publicId);
+    assert.equal(result.status, 200);
+    assert.equal(result.body.count, 52);
+    assert.equal(result.body.items.length, 52); // No hidden default page truncation.
+    assert.deepEqual(result.body.items.map(s => s.id), expected.map(s => s.publicId));
+    assert.deepEqual(Object.keys(result.body), ["count", "items"]);
+    for (const item of result.body.items) {
+      assert.equal(item.districtId, district.publicId);
+      assert.deepEqual(Object.keys(item), ["id", "districtId", "name"]);
+    }
+    assert.equal(result.headers["cache-control"], "private, no-cache");
+    assert.equal(result.headers["last-modified"], undefined);
+  }
+});
+
+integration("district list rejects actors, invalid/missing parents and foreign/sibling jurisdictions before substation queries", async t => {
+  const local = await models.District.findOne({});
+  const sibling = await models.District.create({ name: "Sibling", provinceId: local.provinceId });
+  const foreignProvince = await models.Province.create({ name: "Foreign" });
+  const foreignDistrict = await models.District.create({ name: "Foreign", provinceId: foreignProvince.publicId });
+  t.mock.method(models.GridSubstation, "find", () => { throw new Error("Substation query must not run"); });
+  const { access } = await analyst();
+  const cases = [[null, local.publicId, 401], ["invalid", local.publicId, 401], [token(), local.publicId, 401],
+    [access, "invalid", 400], [access, local.publicId.replace(/^(.{14})4/, (_, prefix) => prefix + "1"), 400], [access, randomUUID(), 404]];
+  const { access: provincial } = await analyst({ readScope: "province", provinceId: local.provinceId });
+  const { access: district } = await analyst({ readScope: "district", districtId: local.publicId });
+  cases.push([provincial, foreignDistrict.publicId, 403], [district, foreignDistrict.publicId, 403], [district, sibling.publicId, 403]);
+  for (const [auth, id, status] of cases) {
+    const result = await districtSubstations(auth, id, { "If-None-Match": "*" });
+    assert.equal(result.status, status);
+    assert.equal(result.headers["cache-control"], "no-store");
+    assert.equal(result.headers.etag, undefined);
+    assert.equal(result.headers["last-modified"], undefined);
+    assert.equal(result.body.items, undefined);
+    assert.equal(result.body.count, undefined);
+    if (status === 401) assert.equal(result.headers["www-authenticate"], "Bearer");
+  }
+  await models.Province.collection.deleteOne({ publicId: local.provinceId });
+  assert.equal((await districtSubstations(access, local.publicId)).status, 404);
+});
+
+integration("empty authorized district returns a complete empty collection; query options including pagination are rejected", async () => {
+  const local = await models.District.findOne({});
+  const empty = await models.District.create({ name: "Empty", provinceId: local.provinceId });
+  const { access } = await analyst();
+  const result = await districtSubstations(access, empty.publicId);
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body, { count: 0, items: [] });
+  for (const query of ["?offset=0", "?limit=1", "?sort=name", "?provinceId=" + local.provinceId, "?extra=x"]) {
+    const invalid = await districtSubstations(access, local.publicId, { "If-None-Match": "*" }, query);
+    assert.equal(invalid.status, 400);
+    assert.equal(invalid.body.code, "INVALID_QUERY");
+    assert.equal(invalid.headers.etag, undefined);
+  }
+});
+
+integration("district collection conditional GET is bodyless and ETags cover full parent-scoped response and context", async () => {
+  const district = await models.District.findOne({});
+  const { user, access } = await analyst();
+  const first = await districtSubstations(access, district.publicId);
+  const tag = first.headers.etag;
+  for (const value of [tag, `W/${tag}`, `"other", ${tag}`, "*"]) {
+    const cached = await districtSubstations(access, district.publicId, { "If-None-Match": value });
+    assert.equal(cached.status, 304);
+    assert.equal(cached.text, "");
+    assert.equal(cached.headers["content-type"], undefined);
+    assert.equal(cached.headers.etag, tag);
+    assert.equal(cached.headers["cache-control"], "private, no-cache");
+  }
+  assert.equal((await districtSubstations(access, district.publicId, { "If-Modified-Since": new Date("2099-01-01").toUTCString() })).status, 200);
+  const { access: other } = await analyst();
+  assert.notEqual((await districtSubstations(other, district.publicId)).headers.etag, tag);
+  const sibling = await models.District.create({ name: "Sibling", provinceId: district.provinceId });
+  await models.GridSubstation.create({ name: "Outside", districtId: sibling.publicId });
+  assert.equal((await districtSubstations(access, district.publicId, { "If-None-Match": tag })).status, 304);
+  await models.GridSubstation.create({ name: "Added", districtId: district.publicId });
+  const changed = await districtSubstations(access, district.publicId, { "If-None-Match": tag });
+  assert.equal(changed.status, 200);
+  assert.equal(changed.body.count, 2);
+  assert.notEqual(changed.headers.etag, tag);
+  await models.User.updateOne({ publicId: user.publicId }, { $set: { readScope: "district", districtId: sibling.publicId } });
+  assert.equal((await districtSubstations(access, district.publicId, { "If-None-Match": changed.headers.etag })).status, 403);
+  await models.User.deleteOne({ publicId: user.publicId });
+  assert.equal((await districtSubstations(access, district.publicId, { "If-None-Match": tag })).status, 401);
+});
+
+integration("district collection shares user-read limits before 304 and sanitizes persistence failures", async t => {
+  const district = await models.District.findOne({});
+  const { user, access } = await analyst({ role: "admin" });
+  const { createHash } = require("node:crypto");
+  await Counter.create({ _id: `user-read:${createHash("sha256").update(user.publicId).digest("hex")}`,
+    count: 119, expiresAt: new Date(Date.now() + 60000) });
+  const first = await installations(access);
+  assert.equal(first.status, 200);
+  const limited = await districtSubstations(access, district.publicId, { "If-None-Match": "*" });
+  assert.equal(limited.status, 429);
+  assert.ok(Number(limited.headers["retry-after"]) > 0);
+  assert.equal(limited.headers.etag, undefined);
+  const { access: another } = await analyst();
+  t.mock.method(models.GridSubstation, "find", () => { throw new Error("private diagnostics"); });
+  const failed = await districtSubstations(another, district.publicId);
+  assert.equal(failed.status, 500);
+  assert.deepEqual(failed.body, { code: "INTERNAL_SERVER_ERROR", message: "An unexpected error occurred.", details: [] });
+  assert.equal(failed.headers["cache-control"], "no-store");
+  assert.equal(failed.headers.etag, undefined);
+});
+
+test("OpenAPI district substation collection documents GET only, full envelope and no query options", () => {
+  const spec = require("../docs/openapi.json");
+  const resource = spec.paths['/districts/{districtId}/grid-substations'];
+  assert.deepEqual(Object.keys(resource), ["get"]);
+  assert.deepEqual(resource.get.security, [{ UserBearer: [] }]);
+  assert.deepEqual(resource.get.parameters.filter(p => p.in === "path").map(p => p.name), ["districtId"]);
+  assert.equal(resource.get.parameters.some(p => p.in === "query"), false);
+  for (const status of [200, 304, 400, 401, 403, 404, 406, 429, 500]) assert.ok(resource.get.responses[status]);
+  assert.equal(resource.get.responses[304].content, undefined);
+  assert.equal(resource.get.responses[200].headers['Last-Modified'], undefined);
+  assert.equal(resource.get.responses[200].content['application/json'].schema.$ref, '#/components/schemas/GridSubstationList');
+  assert.equal(spec.components.schemas.GridSubstationList.properties.items.items.$ref, '#/components/schemas/GridSubstation');
+  assert.deepEqual(spec.components.schemas.GridSubstationList.required, ["count", "items"]);
+  assert.deepEqual(Object.keys(spec.components.schemas.GridSubstationList.properties), ["count", "items"]);
+});
+
+function districtDetails(access, id, headers = {}, query = "") {
+  return rawGet(`/districts/${id}${query}`, access, headers);
+}
+
+integration("district detail serves all authorized scopes with only public fields and no related queries", async t => {
+  const district = await models.District.findOne({});
+  for (const model of [models.GridSubstation, models.SolarInstallation, models.GenerationReading]) {
+    t.mock.method(model, "find", () => { throw new Error("Related collections must not be queried"); });
+    t.mock.method(model, "findOne", () => { throw new Error("Related resources must not be queried"); });
+  }
+  for (const fields of [{}, { role: "admin" }, { readScope: "province", provinceId: district.provinceId },
+    { readScope: "district", districtId: district.publicId }]) {
+    const { access } = await analyst(fields);
+    const result = await districtDetails(access, district.publicId);
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.body, { id: district.publicId, provinceId: district.provinceId, name: district.name });
+    assert.deepEqual(Object.keys(result.body), ["id", "provinceId", "name"]);
+    assert.equal(result.headers["cache-control"], "private, no-cache");
+    assert.match(result.headers.etag, /^"[0-9a-f]{64}"$/);
+    assert.equal(result.headers["last-modified"], undefined);
+  }
+});
+
+integration("district detail rejects foreign/sibling jurisdiction, device tokens, invalid/missing IDs and query options before validators", async () => {
+  const local = await models.District.findOne({});
+  const sibling = await models.District.create({ name: "Sibling", provinceId: local.provinceId });
+  const province = await models.Province.create({ name: "Foreign" });
+  const foreign = await models.District.create({ name: "Foreign", provinceId: province.publicId });
+  const { access } = await analyst();
+  const tag = (await districtDetails(access, local.publicId)).headers.etag;
+  const { access: provincial } = await analyst({ readScope: "province", provinceId: local.provinceId });
+  const { access: district } = await analyst({ readScope: "district", districtId: local.publicId });
+  assert.equal((await districtDetails(provincial, sibling.publicId)).status, 200);
+  for (const [auth, id, status] of [[null, local.publicId, 401], ["invalid", local.publicId, 401], [token(), local.publicId, 401],
+    [access, "invalid", 400], [access, local.publicId.replace(/^(.{14})4/, (_, prefix) => prefix + "1"), 400],
+    [access, randomUUID(), 404], [provincial, foreign.publicId, 403], [district, foreign.publicId, 403], [district, sibling.publicId, 403]]) {
+    const result = await districtDetails(auth, id, { "If-None-Match": tag });
+    assert.equal(result.status, status);
+    assert.equal(result.headers["cache-control"], "no-store");
+    assert.equal(result.headers.etag, undefined);
+    assert.equal(result.headers["last-modified"], undefined);
+    if (status === 401) assert.equal(result.headers["www-authenticate"], "Bearer");
+  }
+  assert.equal((await districtDetails(access, local.publicId, {}, "?limit=1")).status, 400);
+  await models.Province.collection.deleteOne({ publicId: local.provinceId });
+  const broken = await districtDetails(access, local.publicId, { "If-None-Match": "*" });
+  assert.equal(broken.status, 404);
+  assert.deepEqual(broken.body, { code: "NOT_FOUND", message: "District not found.", details: [] });
+});
+
+integration("district conditional GET returns bodyless 304 and tracks public metadata after renewed access checks", async () => {
+  const district = await models.District.findOne({});
+  const { user, access } = await analyst();
+  const first = await districtDetails(access, district.publicId);
+  for (const value of [first.headers.etag, `W/${first.headers.etag}`, `"other", ${first.headers.etag}`, "*"]) {
+    const cached = await districtDetails(access, district.publicId, { "If-None-Match": value });
+    assert.equal(cached.status, 304);
+    assert.equal(cached.text, "");
+    assert.equal(cached.headers["content-type"], undefined);
+    assert.equal(cached.headers.etag, first.headers.etag);
+    assert.equal(cached.headers["cache-control"], "private, no-cache");
+  }
+  const future = new Date("2099-01-01").toUTCString();
+  assert.equal((await districtDetails(access, district.publicId, { "If-Modified-Since": future })).status, 200);
+  assert.equal((await districtDetails(access, district.publicId, { "If-None-Match": '"other"', "If-Modified-Since": future })).status, 200);
+  await models.District.collection.updateOne({ publicId: district.publicId }, { $set: { __v: 99, privateField: "fixture-private" } });
+  assert.equal((await districtDetails(access, district.publicId, { "If-None-Match": first.headers.etag })).status, 304);
+  await models.District.updateOne({ publicId: district.publicId }, { $set: { name: "Renamed" } });
+  const changed = await districtDetails(access, district.publicId, { "If-None-Match": first.headers.etag });
+  assert.equal(changed.status, 200);
+  assert.equal(changed.body.name, "Renamed");
+  assert.notEqual(changed.headers.etag, first.headers.etag);
+  assert.deepEqual(Object.keys(changed.body), ["id", "provinceId", "name"]);
+  const foreign = await models.Province.create({ name: "Changed assignment" });
+  await models.User.updateOne({ publicId: user.publicId }, { $set: { readScope: "province", provinceId: foreign.publicId } });
+  assert.equal((await districtDetails(access, district.publicId, { "If-None-Match": changed.headers.etag })).status, 403);
+  await models.User.deleteOne({ publicId: user.publicId });
+  assert.equal((await districtDetails(access, district.publicId, { "If-None-Match": "*" })).status, 401);
+});
+
+integration("district detail shares read limits before 304 and returns sanitized persistence errors", async t => {
+  const district = await models.District.findOne({});
+  const { user, access } = await analyst({ role: "admin" });
+  const { createHash } = require("node:crypto");
+  await Counter.create({ _id: `user-read:${createHash("sha256").update(user.publicId).digest("hex")}`,
+    count: 119, expiresAt: new Date(Date.now() + 60000) });
+  assert.equal((await districtSubstations(access, district.publicId)).status, 200);
+  const limited = await districtDetails(access, district.publicId, { "If-None-Match": "*" });
+  assert.equal(limited.status, 429);
+  assert.ok(Number(limited.headers["retry-after"]) > 0);
+  assert.equal(limited.headers.etag, undefined);
+  const { access: another } = await analyst();
+  t.mock.method(models.District, "findOne", () => { throw new Error("private diagnostics"); });
+  const failed = await districtDetails(another, district.publicId);
+  assert.equal(failed.status, 500);
+  assert.deepEqual(failed.body, { code: "INTERNAL_SERVER_ERROR", message: "An unexpected error occurred.", details: [] });
+  assert.equal(failed.headers["cache-control"], "no-store");
+  assert.equal(failed.headers.etag, undefined);
+});
+
+test("OpenAPI district detail documents GET only, public fields and conditional responses without query options", () => {
+  const spec = require("../docs/openapi.json");
+  const resource = spec.paths['/districts/{districtId}'];
+  assert.deepEqual(Object.keys(resource), ["get"]);
+  assert.deepEqual(resource.get.security, [{ UserBearer: [] }]);
+  assert.deepEqual(resource.get.parameters.filter(p => p.in === "path").map(p => p.name), ["districtId"]);
+  assert.equal(resource.get.parameters.some(p => p.in === "query"), false);
+  for (const status of [200, 304, 400, 401, 403, 404, 406, 429, 500]) assert.ok(resource.get.responses[status]);
+  assert.equal(resource.get.responses[304].content, undefined);
+  assert.equal(resource.get.responses[200].headers['Last-Modified'], undefined);
+  assert.equal(resource.get.responses[200].content['application/json'].schema.$ref, '#/components/schemas/District');
+  assert.deepEqual(spec.components.schemas.District.required, ["id", "provinceId", "name"]);
+  assert.equal(spec.components.schemas.District.additionalProperties, false);
 });

@@ -6,7 +6,7 @@ A Node.js/Express API backed by Mongoose and MongoDB Atlas for solar generation 
 
 ## Current implementation
 
-The application currently provides public `/health` and `/openapi.json`, user/admin login at `POST /auth/user-tokens`, device login at `POST /auth/device-tokens`, protected `GET /provinces`, `GET /readings`, `GET /installations/{installationId}/readings`, `GET /installations/{installationId}/readings/{readingId}`, `GET /installations/{installationId}/last-reading`, `GET /installations/{installationId}/overview`, `GET /installations/{installationId}`, and `GET /installations`, six data models, the full dataset seed, and controlled user seeding. Login and protected reads use shared MongoDB limits. Installation JWT verification and URL ownership protect `POST /installations/{installationId}/readings`, with transactional active-status checks and shared device-write limits. Remaining resource endpoints, Swagger UI, database readiness, and other traffic limits remain planned. The architecture describes the target API; OpenAPI describes implemented routes only.
+The application currently provides public `/health` and `/openapi.json`, user/admin login at `POST /auth/user-tokens`, device login at `POST /auth/device-tokens`, protected `GET /provinces`, `GET /readings`, `GET /installations/{installationId}/readings`, `GET /installations/{installationId}/readings/{readingId}`, `GET /installations/{installationId}/last-reading`, `GET /installations/{installationId}/overview`, `GET /installations/{installationId}`, `GET /installations`, `GET /grid-substations/{substationId}`, `GET /districts/{districtId}/grid-substations`, `GET /districts/{districtId}`, and `GET /provinces/{provinceId}/districts`, six data models, the full dataset seed, and controlled user seeding. Login and protected reads use shared MongoDB limits. Installation JWT verification and URL ownership protect `POST /installations/{installationId}/readings`, with transactional active-status checks and shared device-write limits. Remaining resource endpoints, Swagger UI, database readiness, and other traffic limits remain planned. The architecture describes the target API; OpenAPI describes implemented routes only.
 
 ## Getting started
 
@@ -54,6 +54,10 @@ Append the paths below to your API base URL. Use your deployed HTTPS host with t
 | POST | `/auth/user-tokens` | Obtain a user/admin access token |
 | POST | `/auth/device-tokens` | Obtain an installation access token |
 | GET | `/provinces` | List provinces visible to the authenticated user |
+| GET | `/provinces/{provinceId}/districts` | List authorized districts within a province |
+| GET | `/districts/{districtId}` | Retrieve public district details within the user's jurisdiction |
+| GET | `/grid-substations/{substationId}` | Retrieve public substation details within the user's jurisdiction |
+| GET | `/districts/{districtId}/grid-substations` | List all substations belonging to an authorized district |
 | POST | `/installations/{installationId}/readings` | Submit a reading for the authenticated active installation |
 | GET | `/installations/{installationId}/readings` | Page/filter reading history within the authenticated user's jurisdiction |
 | GET | `/readings` | Page/filter regional reading history within the authenticated user's jurisdiction |
@@ -110,6 +114,22 @@ POST JSON containing only `meterId` and `deviceSecret` to `/auth/device-tokens`.
 
 Send the user/admin bearer token to GET `/provinces`. Results follow the user's stored national, provincial, or district jurisdiction. See the [province-list contract](docs/API_DESIGN_RULES.md#protected-province-list) for filters, pagination, validators, and limits.
 
+## List a province's districts
+
+Send a user/admin bearer token to GET `/provinces/{provinceId}/districts`. National/admin and provincial readers receive the authorized province's districts; district analysts receive only their assigned district in their own province. Returns the full count/items collection without query options or pagination. See the [province-district contract](docs/API_DESIGN_RULES.md#province-districts).
+
+## Read a district
+
+Send a user/admin bearer token to GET `/districts/{districtId}`, using the public district UUID. Returns id, provinceId and name within the user's stored jurisdiction, without related collections or query options. See the [district-detail contract](docs/API_DESIGN_RULES.md#district-details).
+
+## Read a grid substation
+
+Send a user/admin bearer token to GET `/grid-substations/{substationId}`, using the public substation UUID. The response includes id, districtId and name within the user's stored jurisdiction. See the [substation-detail contract](docs/API_DESIGN_RULES.md#grid-substation-details) for access, validators and errors.
+
+## List a district's grid substations
+
+Send a user/admin bearer token to GET `/districts/{districtId}/grid-substations`, using the public district UUID. The district must be within the user's stored jurisdiction. Returns the full district collection without pagination or query parameters. See the [district-substation collection contract](docs/API_DESIGN_RULES.md#district-grid-substations).
+
 ## Submit a device reading
 
 Send the installation bearer token to POST `/installations/{installationId}/readings`, using the public installation ID returned by device login and a JSON body:
@@ -154,6 +174,8 @@ For regional history, send a user/admin bearer token to GET `/readings`. Optiona
 | `src/features/auth/` | User/device token routes, controllers, credential validation, and issuance services |
 | `src/features/readings/` | Reading routes, controllers, validation, public serialization, scoped queries, and transactional ingestion |
 | `src/features/provinces/` | Province routes, controllers, query validation, and scoped queries |
+| `src/features/districts/` | District detail/province collection routes, validation, controllers and authorized ancestry queries |
+| `src/features/grid-substations/` | Substation detail/district collection routes, validation, controllers and authorized ancestry queries |
 | `src/features/health/` | Public liveness route and static response |
 | `src/routes/api.routes.js` | Central API router and OpenAPI endpoint |
 | `src/middleware/` | Shared JWT verification, installation ownership, rate-limit enforcement, and error handling |

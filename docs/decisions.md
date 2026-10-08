@@ -142,6 +142,27 @@ This file records choices, their reasons, and unresolved questions. Concrete sch
 - **Reason:** Restricting queries before counting/paging prevents jurisdiction leaks; the same filter policy as regional readings gives explicit missing/forbidden/contradictory responses. No client sort was specified, so fixed UUID ordering makes pagination stable without adding parameters.
 - **Validators:** Hash current principal, effective query and complete list envelope; omit Last-Modified because no reliable whole-collection change timestamp exists.
 
+## D26 - Grid substation detail access
+
+- **Choice:** Resolve complete substation ancestry in a snapshot and share the stored-jurisdiction comparison with installation reads. Expose only id, districtId and name; authorize before scoped response validators.
+- **Reason:** Parent ancestry determines provincial access; district users must not gain access to sibling districts. Explicit projections and public allowlists prevent metadata leakage. No geography modification time is stored, so omit Last-Modified.
+
+## D27 - District substation collection
+
+- **Choice:** Authorize District/Province ancestry before a district-bound full-list query in one snapshot. Reuse substation serialization and collection formatting without pagination; fix ordering to name/public UUID ascending.
+- **Reason:** URL parent authorization prevents sibling-district disclosure, including via counts or conditional responses. Public-ID tie-breaking stabilizes equal-name order without introducing client sort/filter options. The user requested no pagination for this small collection; accept no query parameters and omit paging fields entirely. Empty authorized parents remain valid collections.
+- **Validators:** Include current principal, district identity and full envelope in the strong ETag; omit unreliable collection Last-Modified.
+
+## D28 - District detail access
+
+- **Choice:** Reuse District/Province ancestry resolution and stored-jurisdiction comparison for the district detail GET. Return only id/provinceId/name; accept no query options or related collections.
+- **Reason:** Provincial access depends on the stored parent province, while district users must be restricted to their assigned district. Current access checks precede public representation and conditional validators; no reliable district metadata modification timestamp exists.
+
+## D29 - Province district collection
+
+- **Choice:** Authorize the requested province, then query only districts in that province; additionally restrict district analysts by their stored district UUID. Reuse district serialization and the unpaginated count/items format with fixed name/public UUID order.
+- **Reason:** A district analyst can navigate their parent province without seeing siblings or leaking their count through validators. Current stored ancestry establishes provincial membership; parent/list reads share a snapshot. No query options, pagination fields or unreliable Last-Modified are introduced.
+
 ## Pending decisions
 
 | Topic | Decision needed |

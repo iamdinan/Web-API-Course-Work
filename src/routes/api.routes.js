@@ -8,6 +8,8 @@ router.use('/health', healthRouter);
 router.use('/auth/user-tokens', require('../features/auth/user-tokens.routes'));
 router.use('/auth/device-tokens', require('../features/auth/device-tokens.routes'));
 router.use('/provinces', require('../features/provinces/provinces.routes'));
+router.use('/', require('../features/districts/districts.routes'));
+router.use('/', require('../features/grid-substations/grid-substations.routes'));
 router.use('/', require('../features/readings/readings.routes'));
 router.get('/openapi.json', (req, res) => {
   res.set('Cache-Control', 'no-cache').json({

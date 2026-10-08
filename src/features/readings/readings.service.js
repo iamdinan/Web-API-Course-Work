@@ -1,7 +1,7 @@
 const mongoose = require("mongoose");
 const { randomUUID } = require("node:crypto");
 const { SolarInstallation, GenerationReading, GridSubstation, District, Province } = require("../../models");
-const { publicUuid } = require("../../services/user-principal");
+const { publicUuid, jurisdictionAllows } = require("../../services/user-principal");
 const { listBody } = require("../../utils/list-response");
 const readingFields = "publicId installationId recordedAt powerKw energyKwh voltageV receivedAt -_id";
 const { readingBody, installationBody, overviewBody } = require("./readings.serializer");
@@ -16,9 +16,7 @@ async function authorizedInstallation(user, installationId, session = null) {
   if (!district || !publicUuid.test(district.provinceId)) return false;
   const province = await Province.findOne({ publicId: district.provinceId }).select("publicId name -_id").session(session);
   if (!province) return false;
-  if ((user.readScope === "province" && district.provinceId !== user.provinceId) ||
-      (user.readScope === "district" && substation.districtId !== user.districtId) ||
-      !["national", "province", "district"].includes(user.readScope)) {
+  if (!jurisdictionAllows(user, district.provinceId, substation.districtId)) {
     throw new ReadingAccessError();
   }
   return { installation, substation, district, province };

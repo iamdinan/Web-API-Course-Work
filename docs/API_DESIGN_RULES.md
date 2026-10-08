@@ -76,6 +76,40 @@ Apply the current stored jurisdiction and optional geographic filters before cou
 
 Successful responses use `Cache-Control: private, no-cache` and a stable strong ETag tied to the current principal and exact scoped representation. Omit Last-Modified because no reliable geography modification time is stored. Authenticate/reload User, apply the shared 120/minute user read limit, and scope the representation before conditional GET evaluation. Matching If-None-Match returns bodyless 304 with validators. Authentication, query, and rate-limit errors are not cacheable; 429 includes Retry-After seconds.
 
+## Province districts
+
+`GET /provinces/{provinceId}/districts` requires current user JWT authentication and the shared 120/minute User read limit. Installation tokens return 401 UNAUTHORIZED with WWW-Authenticate: Bearer. Validate provinceId as a public UUID v4 (400 INVALID_REQUEST). Missing requested province returns 404 NOT_FOUND with message `Province not found.` National analysts/admins list all districts in the requested province; provincial analysts only within their assigned province. District analysts may request their own parent province, but receive only their assigned district. Other provinces return 403 FORBIDDEN with message `The province is outside your permitted jurisdiction.` Missing/broken assigned district ancestry fails closed with 403 for an existing requested province.
+
+Authorize the parent before querying district results. Bind the database list to the requested provinceId and, for district analysts, the stored district public UUID; never load sibling districts into their response or validator input. Return `{ "count": 0, "items": [] }`, with public id/provinceId/name items, sorted by name then public UUID ascending for deterministic order. Empty authorized provinces return 200 with an empty collection. This fixed order has no client-selectable sorting option. Accept no query parameters: pagination, sorting, geography or other supplied parameters return 400 INVALID_QUERY. Omit next/previous fields. Read parent authorization and full filtered list in one snapshot; count equals returned records.
+
+Use Cache-Control: private, no-cache and a stable strong ETag covering current authorized principal, requested province and the complete filtered count/items response. Matching If-None-Match (strong/weak, tag list or *) returns bodyless 304 with ETag/cache headers and no Content-Type only after current authentication, authorization and shared rate limiting. Omit Last-Modified because no reliable whole-collection change time exists; If-Modified-Since alone returns 200. Errors use no-store and omit validators/data/counts; 429 includes Retry-After.
+
+## District details
+
+`GET /districts/{districtId}` requires current user JWT authentication and the shared 120/minute User read limit. Installation tokens return 401 UNAUTHORIZED with WWW-Authenticate: Bearer. Validate districtId as a public UUID v4 (400 INVALID_REQUEST). Missing district or province ancestry returns 404 NOT_FOUND with message `District not found.` National analysts/admins read nationally; provincial analysts read districts within their stored province; district analysts only their assigned district. Other access returns 403 FORBIDDEN with message `The district is outside your permitted jurisdiction.` Authorize before data or validators.
+
+Return 200 with exactly id, provinceId and name. Use public UUIDs only; omit internal IDs, version/private metadata and related collections. Accept no query options; supplied query parameters return 400 INVALID_QUERY.
+
+Use Cache-Control: private, no-cache and a strong ETag covering the current authorized principal and complete public district representation. Matching If-None-Match (strong/weak, tag list or *) returns bodyless 304 with ETag/cache headers and no Content-Type only after current authentication, jurisdiction and shared rate limits. Omit Last-Modified because no reliable district metadata change time is stored; If-Modified-Since alone returns 200. Errors use no-store and omit validators; 429 includes Retry-After.
+
+## District grid substations
+
+`GET /districts/{districtId}/grid-substations` requires current user JWT authentication and the shared 120/minute User read limit. Installation tokens return 401 UNAUTHORIZED with WWW-Authenticate: Bearer. Validate districtId as a UUID v4 (400 INVALID_REQUEST). Missing district or province ancestry returns 404 NOT_FOUND with message `District not found.` National analysts/admins may access nationally; provincial analysts only districts in their stored province; district analysts only their assigned district. Other access returns 403 FORBIDDEN with message `The district is outside your permitted jurisdiction.` Authorize the parent before any substation query, count or validator.
+
+Return the full district collection without pagination. Accept no query parameters; offset, limit, geography filters, sort and other supplied query parameters return 400 INVALID_QUERY. Order by name ascending then public UUID ascending for deterministic ties.
+
+Return `{ "count": 0, "items": [] }`; items contain exactly id, districtId and name for substations in the URL district. Count equals the number of returned district substations. Empty authorized districts return 200 with count=0 and empty items. Omit next and previous entirely. Read parent ancestry and the full list in one snapshot; derive count from the returned records.
+
+Use Cache-Control: private, no-cache and a stable strong ETag covering current principal, district identity and the complete response. Matching If-None-Match (strong/weak, tag list or *) returns bodyless 304 with ETag/cache headers and no Content-Type only after current access and shared rate limits. Omit Last-Modified because no reliable whole-collection change timestamp exists; If-Modified-Since alone returns 200. Errors use no-store and omit validators/data/counts; 429 includes Retry-After.
+
+## Grid substation details
+
+`GET /grid-substations/{substationId}` requires current user JWT authentication and the shared 120/minute User read limit. Installation tokens return 401 UNAUTHORIZED with WWW-Authenticate: Bearer. Validate the public UUID v4 path parameter (400 INVALID_REQUEST). Resolve the substation, district and province before public data or validators; national analysts/admins read nationally, provincial analysts within their stored province and district analysts within their stored district. Cross-jurisdiction access returns 403 FORBIDDEN with message `The substation is outside your permitted jurisdiction.` Missing substation or ancestry returns 404 NOT_FOUND with message `Substation not found.` Broken ancestry fails closed even for national readers.
+
+Return 200 with exactly id, districtId and name, using public UUIDs only. Do not include internal IDs, version metadata, installations, reading history or credential fields. No new query filters or child-list endpoints are introduced.
+
+Use Cache-Control: private, no-cache and a stable strong ETag covering current authorized principal and public representation. Matching If-None-Match (strong/weak, matching tag in a list or *) returns bodyless 304 with ETag/cache headers and no Content-Type, only after current authentication, jurisdiction checks and shared rate limiting. Omit Last-Modified because no reliable substation metadata change time is stored; If-Modified-Since alone returns 200. Errors use no-store and omit validators; 429 includes Retry-After.
+
 ## Individual reading
 
 `GET /installations/{installationId}/readings/{readingId}` requires user JWT authentication and current stored jurisdiction, following the same 401 contract as protected province reads. Installation tokens return 401. Authenticate, consume the shared 120/minute User read limit, validate both UUID v4 path parameters (400 `INVALID_REQUEST` on failure), and resolve installation ancestry before looking up the reading or evaluating validators. National analysts/admins read nationally; provincial/district analysts read only within their assigned ancestry.
