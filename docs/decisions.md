@@ -178,6 +178,11 @@ This file records choices, their reasons, and unresolved questions. Concrete sch
 
 - **Timestamp display correction:** User requested replacing asOf with readable text, rather than adding a second field. Reuse the existing reading display format: `08 Oct 2026, 12:00 PM (Sri Lanka)`. The internal once-captured time retains millisecond precision for all calculations; ETag tracks the displayed timestamp and complete values.
 
+## D32 - Nested substation installation list
+
+- **Choice:** Extend the existing installation-list service with an optional URL substation parent, reusing geography authorization, count/result queries and public serializer. The nested endpoint returns the complete count/items collection, fixed public UUID order, including active/inactive records. No query options, pagination or next/previous fields.
+- **Reason:** The user requested removing pagination for this small collection (about ten installations per substation). Shared persistence logic keeps scoped counts and snapshots consistent with the top-level list. Explicit parent authorization precedes installation queries and conditional responses. Include parent UUID in validators even for identical empty collections. Top-level GET /installations retains its existing pagination.
+
 ## Pending decisions
 
 | Topic | Decision needed |

@@ -3132,6 +3132,168 @@
           }
         }
       }
+    },
+    "/grid-substations/{substationId}/installations": {
+      "get": {
+        "operationId": "listSubstationInstallations",
+        "summary": "List all public installations connected to an authorized grid substation",
+        "description": "Require current user authentication (installation tokens return 401), shared 120/minute user-read limits and public UUID v4 substationId (invalid path 400). Resolve requested substation and complete ancestry, then authorize national/admin, assigned province or assigned district access before installation queries/counts/validators. Missing substation or ancestry returns 404; outside jurisdiction 403. Return all installations connected to the URL substation, including active and inactive, with public id/substationId/meterId/status. Reuse existing installation-list query logic and serializer, without pagination. Accept no query parameters: offset, limit, geography, sorting and all other options return 400 INVALID_QUERY. Fixed ascending public UUID order. Response has count and items only; no next/previous fields or pagination links. Empty authorized collections return 200 with count=0 and items=[]. Resolve geography/count/results in one snapshot. Strong ETag covers current principal, parent substation and complete response; private, no-cache. Matching If-None-Match returns bodyless 304 after access/rate checks. Omit Last-Modified; If-Modified-Since alone returns 200. Errors use no-store without data/counts/validators.",
+        "security": [
+          {
+            "UserBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "substationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Matching strong/weak tag, tag in a list, or * returns bodyless 304 only after authorization and read limiting."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Complete authorized substation installation collection including active and inactive records",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "ETag": {
+                "$ref": "#/components/headers/ScopedETag"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubstationInstallationList"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Complete authorized response unchanged; no body or Content-Type.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "ETag": {
+                "$ref": "#/components/headers/ScopedETag"
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid substationId public UUID (INVALID_REQUEST) or supplied query parameters (INVALID_QUERY).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing/invalid/expired token, installation token, or deleted/invalid user (UNAUTHORIZED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "WWW-Authenticate": {
+                "$ref": "#/components/headers/BearerChallenge"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Requested substation outside stored jurisdiction (FORBIDDEN).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Missing requested substation or its district/province ancestry (NOT_FOUND).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "406": {
+            "$ref": "#/components/responses/NotAcceptable"
+          },
+          "429": {
+            "description": "Shared user-read limit exceeded (RATE_LIMIT_EXCEEDED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/LoginRetryAfter"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected persistence failure (INTERNAL_SERVER_ERROR).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3655,6 +3817,27 @@
             "type": "integer",
             "minimum": 0,
             "description": "Active or inactive installations with missing midnight baseline, fewer than two daily readings, or counter decreases; each installation counted once."
+          }
+        }
+      },
+      "SubstationInstallationList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "count",
+          "items"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Matching authorized installations before pagination."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SolarInstallation"
+            }
           }
         }
       }

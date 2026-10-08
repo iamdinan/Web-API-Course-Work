@@ -2388,3 +2388,122 @@ test("OpenAPI summary documents required UUID, observed energy and private time-
   assert.equal(schema.properties.asOf.example,"08 Oct 2026, 12:00 PM (Sri Lanka)");
   assert.match(schema.properties.todayEnergyKwh.description,/observed.*incomplete/i);
 });
+
+
+function substationInstallations(access, id, query = "", headers = {}) {
+  return rawGet(`/grid-substations/${id}/installations${query}`,access,headers);
+}
+
+integration("nested installations serve every authorized scope with parent-only counts and public active/inactive fields", async t => {
+  const f = await installationListFixture();
+  const parent = f.stations[0].publicId;
+  const expected = f.records.filter(r=>r.substationId===parent).map(r=>r.publicId).sort();
+  const originalCount = models.SolarInstallation.countDocuments;
+  const originalFind = models.SolarInstallation.find;
+  t.mock.method(models.SolarInstallation,"countDocuments",function(filter){ assert.deepEqual(filter,{ substationId:{ $in:[parent] } }); return originalCount.call(this,filter); });
+  t.mock.method(models.SolarInstallation,"find",function(filter){ assert.deepEqual(filter,{ substationId:{ $in:[parent] } }); return originalFind.call(this,filter); });
+  for(const fields of [{},{ role:"admin" },{ readScope:"province",provinceId:f.local.provinceId },{ readScope:"district",districtId:f.local.publicId }]) {
+    const { access } = await analyst(fields);
+    const result = await substationInstallations(access,parent);
+    assert.equal(result.status,200); assert.equal(result.body.count,expected.length);
+    assert.deepEqual(result.body.items.map(r=>r.id),expected);
+    assert.deepEqual(Object.keys(result.body),["count","items"]);
+    assert.ok(result.body.items.some(r=>r.status==="inactive"));
+    for(const item of result.body.items){ assert.equal(item.substationId,parent); assert.deepEqual(Object.keys(item),["id","substationId","meterId","status"]); }
+    assert.equal(result.headers["cache-control"],"private, no-cache"); assert.equal(result.headers["last-modified"],undefined);
+  }
+});
+
+integration("nested installations reject actors/IDs and foreign jurisdiction before count and page queries or validators", async t => {
+  const f = await installationListFixture();
+  const { access } = await analyst();
+  const { access:provincial } = await analyst({ readScope:"province",provinceId:f.local.provinceId });
+  const { access:district } = await analyst({ readScope:"district",districtId:f.local.publicId });
+  assert.equal((await substationInstallations(provincial,f.stations[1].publicId)).status,200);
+  t.mock.method(models.SolarInstallation,"countDocuments",()=>{ throw Error("Count must follow authorization"); });
+  t.mock.method(models.SolarInstallation,"find",()=>{ throw Error("Page must follow authorization"); });
+  for(const [auth,id,status] of [[null,f.stations[0].publicId,401],[token(),f.stations[0].publicId,401],
+    [access,"invalid",400],[access,f.stations[0].publicId.replace(/^(.{14})4/,(_,prefix)=>prefix+"1"),400],
+    [access,randomUUID(),404],[provincial,f.stations[2].publicId,403],[district,f.stations[1].publicId,403],[district,f.stations[2].publicId,403]]) {
+    const result = await substationInstallations(auth,id,"",{ "If-None-Match":"*" });
+    assert.equal(result.status,status); assert.equal(result.headers.etag,undefined); assert.equal(result.headers["cache-control"],"no-store");
+    assert.equal(result.body.items,undefined); assert.equal(result.body.count,undefined);
+    if(status===401) assert.equal(result.headers["www-authenticate"],"Bearer");
+  }
+  await models.District.collection.deleteOne({ publicId:f.local.publicId });
+  assert.equal((await substationInstallations(access,f.stations[0].publicId)).status,404);
+});
+
+integration("nested installations return the complete collection, authorized empty results and reject all query options", async () => {
+  const f = await installationListFixture();
+  const parent = f.stations[0].publicId;
+  const { access } = await analyst();
+  // Exceed the former default page size to prove that no hidden limit remains.
+  const extra = await models.SolarInstallation.create(Array.from({ length:51 },()=>({ substationId:parent,meterId:randomUUID(),deviceCredentialHash:"fixture-only" })));
+  const expected = [...f.records.filter(r=>r.substationId===parent),...extra].map(r=>r.publicId).sort();
+  const result = await substationInstallations(access,parent);
+  assert.equal(result.status,200); assert.equal(result.body.count,54);
+  assert.deepEqual(Object.keys(result.body),["count","items"]);
+  assert.deepEqual(result.body.items.map(r=>r.id),expected);
+  const empty = await models.GridSubstation.create({ name:"Empty",districtId:f.local.publicId });
+  const none = await substationInstallations(access,empty.publicId);
+  assert.equal(none.status,200); assert.deepEqual(none.body,{ count:0,items:[] });
+  for(const query of ["?offset=0","?limit=1","?provinceId="+f.local.provinceId,"?districtId="+f.local.publicId,"?substationId="+parent,"?sort=id","?status=active","?from=2026-10-08","?extra=x"]) {
+    const failed=await substationInstallations(access,parent,query,{ "If-None-Match":"*" });
+    assert.equal(failed.status,400); assert.equal(failed.body.code,"INVALID_QUERY"); assert.equal(failed.headers.etag,undefined);
+  }
+});
+
+integration("nested installation ETags cover parent and full scoped body and recheck current access", async () => {
+  const f = await installationListFixture();
+  const parent = f.stations[0].publicId;
+  const { user,access } = await analyst();
+  const first = await substationInstallations(access,parent,"");
+  for(const value of [first.headers.etag,`W/${first.headers.etag}`,`"other", ${first.headers.etag}`,"*"]) {
+    const cached=await substationInstallations(access,parent,"",{ "If-None-Match":value });
+    assert.equal(cached.status,304); assert.equal(cached.text,""); assert.equal(cached.headers["content-type"],undefined);
+    assert.equal(cached.headers["cache-control"],"private, no-cache"); assert.equal(cached.headers.etag,first.headers.etag);
+  }
+  await models.SolarInstallation.collection.updateOne({ publicId:installationId },{ $set:{ __v:100,deviceCredentialHash:"changed-private" } });
+  assert.equal((await substationInstallations(access,parent,"",{ "If-None-Match":first.headers.etag })).status,304);
+  await models.SolarInstallation.create({ substationId:f.stations[1].publicId,meterId:randomUUID(),deviceCredentialHash:"fixture-only" });
+  assert.equal((await substationInstallations(access,parent,"",{ "If-None-Match":first.headers.etag })).status,304);
+  await models.SolarInstallation.create({ substationId:parent,meterId:randomUUID(),deviceCredentialHash:"fixture-only" });
+  const changed=await substationInstallations(access,parent,"",{ "If-None-Match":first.headers.etag });
+  assert.equal(changed.status,200); assert.equal(changed.body.count,4); assert.notEqual(changed.headers.etag,first.headers.etag);
+  const empty1=await models.GridSubstation.create({ name:"Empty 1",districtId:f.local.publicId });
+  const empty2=await models.GridSubstation.create({ name:"Empty 2",districtId:f.local.publicId });
+  assert.notEqual((await substationInstallations(access,empty1.publicId)).headers.etag,(await substationInstallations(access,empty2.publicId)).headers.etag);
+  assert.equal((await substationInstallations(access,parent,"",{ "If-Modified-Since":new Date("2099-01-01").toUTCString() })).status,200);
+  await models.User.updateOne({ publicId:user.publicId },{ $set:{ readScope:"district",districtId:f.sibling.publicId } });
+  assert.equal((await substationInstallations(access,parent,"",{ "If-None-Match":changed.headers.etag })).status,403);
+  await models.User.deleteOne({ publicId:user.publicId });
+  assert.equal((await substationInstallations(access,parent,"",{ "If-None-Match":"*" })).status,401);
+});
+
+integration("nested installation collection shares read limits and sanitizes persistence failures", async t => {
+  const station=await models.GridSubstation.findOne({});
+  const { user,access }=await analyst({ role:"admin" });
+  const { createHash }=require("node:crypto");
+  await Counter.create({ _id:`user-read:${createHash("sha256").update(user.publicId).digest("hex")}`,count:119,expiresAt:new Date(Date.now()+60000) });
+  assert.equal((await installations(access)).status,200);
+  const limited=await substationInstallations(access,station.publicId,"",{ "If-None-Match":"*" });
+  assert.equal(limited.status,429); assert.ok(Number(limited.headers["retry-after"])>0); assert.equal(limited.headers.etag,undefined);
+  const { access:another }=await analyst();
+  t.mock.method(models.SolarInstallation,"countDocuments",()=>{ throw Error("private diagnostics"); });
+  const failed=await substationInstallations(another,station.publicId);
+  assert.equal(failed.status,500); assert.equal(failed.body.code,"INTERNAL_SERVER_ERROR"); assert.equal(failed.headers.etag,undefined); assert.equal(failed.headers["cache-control"],"no-store");
+});
+
+test("OpenAPI nested installation list documents GET, UUID path and unpaginated public collection without query options", () => {
+  const spec=require("../docs/openapi.json");
+  const resource=spec.paths['/grid-substations/{substationId}/installations'];
+  assert.deepEqual(Object.keys(resource),["get"]); assert.deepEqual(resource.get.security,[{ UserBearer:[] }]);
+  assert.deepEqual(resource.get.parameters.filter(p=>p.in==="path").map(p=>p.name),["substationId"]);
+  assert.deepEqual(resource.get.parameters.filter(p=>p.in==="query"),[]);
+  for(const status of [200,304,400,401,403,404,406,429,500]) assert.ok(resource.get.responses[status]);
+  assert.equal(resource.get.responses[304].content,undefined); assert.equal(resource.get.responses[200].headers['Last-Modified'],undefined);
+  assert.equal(resource.get.responses[200].content['application/json'].schema.$ref,'#/components/schemas/SubstationInstallationList');
+  assert.deepEqual(Object.keys(spec.components.schemas.SubstationInstallationList.properties),['count','items']);
+  assert.equal(spec.components.schemas.SubstationInstallationList.properties.items.items.$ref,spec.components.schemas.InstallationList.properties.items.items.$ref);
+});

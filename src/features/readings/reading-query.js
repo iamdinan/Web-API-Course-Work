@@ -28,22 +28,31 @@ function readingQuery(geography = []) {
 
 const validateReadingQuery = readingQuery();
 const validateRegionalReadingQuery = readingQuery(["provinceId", "districtId", "substationId"]);
-function validateInstallationQuery(req, res, next) {
-  const query = req.query;
-  const geography = ["provinceId", "districtId", "substationId"];
-  const allowed = ["offset", "limit", ...geography];
-  const offset = Number(query.offset ?? 0);
-  const limit = Number(query.limit ?? 50);
-  const invalid = Object.entries(query).some(([key, value]) => !allowed.includes(key) || typeof value !== "string") ||
-    geography.some(key => query[key] !== undefined && !publicUuid.test(query[key])) ||
-    ["offset", "limit"].some(key => query[key] !== undefined && !/^\d+$/.test(query[key])) ||
-    !Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 200 ||
-    !Number.isSafeInteger(offset + limit);
-  if (invalid) return sendError(res, 400, { code: "INVALID_QUERY",
-    message: "Provide valid geographic UUID filters, offset, and limit (1-200).", details: [] });
-  req.installationQuery = { offset, limit };
-  for (const key of geography) if (query[key] !== undefined) req.installationQuery[key] = query[key];
+function installationQuery(geography) {
+  return function validate(req, res, next) {
+    const query = req.query;
+    const allowed = ["offset", "limit", ...geography];
+    const offset = Number(query.offset ?? 0);
+    const limit = Number(query.limit ?? 50);
+    const invalid = Object.entries(query).some(([key, value]) => !allowed.includes(key) || typeof value !== "string") ||
+      geography.some(key => query[key] !== undefined && !publicUuid.test(query[key])) ||
+      ["offset", "limit"].some(key => query[key] !== undefined && !/^\d+$/.test(query[key])) ||
+      !Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 200 ||
+      !Number.isSafeInteger(offset + limit);
+    if (invalid) return sendError(res, 400, { code: "INVALID_QUERY",
+      message: geography.length ? "Provide valid geographic UUID filters, offset, and limit (1-200)." :
+        "Provide only valid offset and limit (1-200).", details: [] });
+    req.installationQuery = { offset, limit };
+    for (const key of geography) if (query[key] !== undefined) req.installationQuery[key] = query[key];
+    next();
+  };
+}
+const validateInstallationQuery = installationQuery(["provinceId", "districtId", "substationId"]);
+function validateSubstationInstallationQuery(req, res, next) {
+  if (Object.keys(req.query).length) {
+    return sendError(res, 400, { code: "INVALID_QUERY", message: "This endpoint does not accept query parameters.", details: [] });
+  }
   next();
 }
 
-module.exports = { validateReadingQuery, validateRegionalReadingQuery, validateInstallationQuery };
+module.exports = { validateReadingQuery, validateRegionalReadingQuery, validateInstallationQuery, validateSubstationInstallationQuery };

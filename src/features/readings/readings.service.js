@@ -57,16 +57,19 @@ async function findInstallation(user, installationId) {
   }, { readConcern: { level: "snapshot" } });
 }
 
-async function listInstallations(user, query) {
+async function listInstallations(user, query, substationId) {
   return mongoose.connection.transaction(async session => {
-    const substationIds = await regionalSubstationIds(user, query, session);
+    // Both routes resolve and authorize geography before any count/page query.
+    const substationIds = await regionalSubstationIds(user, substationId ? { ...query, substationId } : query, session);
     const filter = { substationId: { $in: substationIds } };
     const count = await SolarInstallation.countDocuments(filter).session(session);
-    const records = await SolarInstallation.find(filter)
-      .select("publicId substationId meterId status -_id").session(session)
-      .sort({ publicId: 1 }).skip(query.offset).limit(query.limit);
-    return listBody(count, records.map(installationBody), query, "/installations",
-      ["provinceId", "districtId", "substationId"]);
+    const recordsQuery = SolarInstallation.find(filter)
+      .select("publicId substationId meterId status -_id").session(session).sort({ publicId: 1 });
+    if (query) recordsQuery.skip(query.offset).limit(query.limit);
+    const records = await recordsQuery;
+    return listBody(count, records.map(installationBody), query,
+      substationId ? `/grid-substations/${substationId}/installations` : "/installations",
+      substationId ? [] : ["provinceId", "districtId", "substationId"]);
   }, { readConcern: { level: "snapshot" } });
 }
 

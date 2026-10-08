@@ -6,7 +6,7 @@ A Node.js/Express API backed by Mongoose and MongoDB Atlas for solar generation 
 
 ## Current implementation
 
-The application currently provides public `/health` and `/openapi.json`, user/admin login at `POST /auth/user-tokens`, device login at `POST /auth/device-tokens`, protected `GET /provinces`, `GET /readings`, `GET /installations/{installationId}/readings`, `GET /installations/{installationId}/readings/{readingId}`, `GET /installations/{installationId}/last-reading`, `GET /installations/{installationId}/overview`, `GET /installations/{installationId}`, `GET /installations`, `GET /grid-substations/{substationId}`, `GET /districts/{districtId}/grid-substations`, `GET /districts/{districtId}`, `GET /provinces/{provinceId}/districts`, `GET /provinces/{provinceId}`, and `GET /summarize-district-generation`, six data models, the full dataset seed, and controlled user seeding. Login and protected reads use shared MongoDB limits. Installation JWT verification and URL ownership protect `POST /installations/{installationId}/readings`, with transactional active-status checks and shared device-write limits. Remaining resource endpoints, Swagger UI, database readiness, and other traffic limits remain planned. The architecture describes the target API; OpenAPI describes implemented routes only.
+The application currently provides public `/health` and `/openapi.json`, user/admin login at `POST /auth/user-tokens`, device login at `POST /auth/device-tokens`, protected `GET /provinces`, `GET /readings`, `GET /installations/{installationId}/readings`, `GET /installations/{installationId}/readings/{readingId}`, `GET /installations/{installationId}/last-reading`, `GET /installations/{installationId}/overview`, `GET /installations/{installationId}`, `GET /installations`, `GET /grid-substations/{substationId}`, `GET /districts/{districtId}/grid-substations`, `GET /districts/{districtId}`, `GET /provinces/{provinceId}/districts`, `GET /provinces/{provinceId}`, `GET /summarize-district-generation`, and `GET /grid-substations/{substationId}/installations`, six data models, the full dataset seed, and controlled user seeding. Login and protected reads use shared MongoDB limits. Installation JWT verification and URL ownership protect `POST /installations/{installationId}/readings`, with transactional active-status checks and shared device-write limits. Remaining resource endpoints, Swagger UI, database readiness, and other traffic limits remain planned. The architecture describes the target API; OpenAPI describes implemented routes only.
 
 ## Getting started
 
@@ -43,6 +43,19 @@ Startup connects to MongoDB before opening the HTTP listener. Watch for `MongoDB
 | `npm run seed` | Insert the full sample dataset into the configured database |
 | `npm run seed:users` | Insert and verify the 36 configured accounts without changing existing users |
 
+## Substation installation list manual checks
+
+Use a user/admin token and a real public substation UUID. This endpoint returns all installations in count/items, with no pagination or query parameters. The [nested installation contract](docs/API_DESIGN_RULES.md#substation-installation-list) defines jurisdiction, fields and conditional behavior.
+
+```powershell
+$listUrl = "$base/api/v1.0/grid-substations/$substationId/installations"
+$response = Invoke-WebRequest $listUrl -Headers @{ Authorization = "Bearer $userToken" }
+$response.Content # count/items; public fields only
+curl.exe -i $listUrl -H "Authorization: Bearer $userToken" -H 'If-None-Match: *' # bodyless 304
+```
+
+Verify count matches the full items array, with active/inactive records and no next/previous fields. National/admin and authorized provincial/district tokens return 200; outside jurisdiction returns 403, installation tokens 401, malformed substation UUID 400 and unused valid UUID 404. All query parameters, including offset/limit, geography and sort/status, return 400. Empty authorized substations return count=0 and empty items. Matching a saved ETag returns 304 until the authorized collection changes. If-Modified-Since alone returns 200.
+
 ## District summary manual checks
 
 Send a user/admin token and a real public district UUID. See the [summary HTTP contract](docs/API_DESIGN_RULES.md#district-generation-summary). todayEnergyKwh is observed daily energy that may be incomplete; inspect incompleteEnergyInstallationCount. Inactive history contributes energy, while only active fresh readings contribute current power.
@@ -71,6 +84,7 @@ Append the paths below to your API base URL. Use your deployed HTTPS host with t
 | GET | `/provinces/{provinceId}` | Retrieve public province details within the user's jurisdiction |
 | GET | `/provinces/{provinceId}/districts` | List authorized districts within a province |
 | GET | `/districts/{districtId}` | Retrieve public district details within the user's jurisdiction |
+| GET | `/grid-substations/{substationId}/installations` | List all active and inactive installations within an authorized substation |
 | GET | `/grid-substations/{substationId}` | Retrieve public substation details within the user's jurisdiction |
 | GET | `/districts/{districtId}/grid-substations` | List all substations belonging to an authorized district |
 | POST | `/installations/{installationId}/readings` | Submit a reading for the authenticated active installation |

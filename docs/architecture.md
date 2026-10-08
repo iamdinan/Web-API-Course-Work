@@ -232,6 +232,10 @@ Only after ancestry authorization, query GenerationReading with both `{ publicId
 
 Resolve geography, count and page in one read-only snapshot. Project only publicId/substationId/meterId/status, sort by publicId ascending, then offset/limit; serialize through installationBody. Reading history is not queried. The shared listBody utility supplies the standard count/next/previous/items envelope and prefix-aware filter-preserving links, also used by reading lists. Query parameters and collection validators belong to the [HTTP contract](API_DESIGN_RULES.md#installation-list). No installation writes are implemented.
 
+### Substation installation collection
+
+`GET /grid-substations/{substationId}/installations` calls the same listInstallations service/controller as GET /installations with a URL parent argument and no pagination query. Resolve/authorize that public substation through the existing regional geography resolver before any SolarInstallation count/find. Both endpoints bind count and results to resolved public substation IDs and reuse projections, ascending publicId order and installationBody. The nested route rejects all query parameters and does not apply skip/limit. Keep active/inactive records. Existing listBody without a query returns count/items only, with no next/previous links. Authorization, count and complete results remain in the same snapshot. Validators include the parent even for identical empty bodies. See the [HTTP contract](API_DESIGN_RULES.md#substation-installation-list); no writes or other resource routes are added.
+
 ### Installation details
 
 `GET /installations/{installationId}` returns exactly `{ "id": "<UUID>", "substationId": "<UUID>", "meterId": "<meter identifier>", "status": "active" }`; status may also be inactive. Reuse authorizedInstallation and the read-only snapshot pattern to resolve complete ancestry and current installation metadata coherently. No reading query or domain write occurs. Missing installation/ancestry fails closed; jurisdiction rejection precedes public serialization and validators.

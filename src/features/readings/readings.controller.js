@@ -98,12 +98,12 @@ async function getInstallation(req, res) {
 async function getInstallations(req, res) {
   let body;
   try {
-    body = await readings.listInstallations(req.user, req.installationQuery);
+    body = await readings.listInstallations(req.user, req.installationQuery, req.params.substationId);
   } catch (error) {
     if (!(error instanceof readings.ReadingFilterError)) throw error;
     return sendError(res, error.status, { code: error.code, message: error.message, details: [] });
   }
-  const tag = createHash("sha256").update(JSON.stringify({ user: req.user, query: req.installationQuery, body })).digest("hex");
+  const tag = createHash("sha256").update(JSON.stringify({ user: req.user, substationId: req.params.substationId, query: req.installationQuery, body })).digest("hex");
   return res.set({ "Cache-Control": "private, no-cache", ETag: `"${tag}"` }).json(body);
 }
 

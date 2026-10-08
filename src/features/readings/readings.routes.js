@@ -5,11 +5,12 @@ const { readingRequest } = require("./reading-request");
 const { deviceWriteLimit, userReadLimit } = require("../../middleware/rate-limits");
 const { postReading, getReading, getLastReading, getReadings, getOverview, getInstallation, getInstallations } = require("./readings.controller");
 const { verifyUserJwt } = require("../../middleware/verify-user-jwt");
-const { validateReadingPath, validateInstallationPath } = require("./reading-path");
-const { validateReadingQuery, validateRegionalReadingQuery, validateInstallationQuery } = require("./reading-query");
+const { validateReadingPath, validateInstallationPath, validateSubstationPath } = require("./reading-path");
+const { validateReadingQuery, validateRegionalReadingQuery, validateInstallationQuery, validateSubstationInstallationQuery } = require("./reading-query");
 
 router.get("/readings", verifyUserJwt, userReadLimit, validateRegionalReadingQuery, getReadings);
 router.get("/installations", verifyUserJwt, userReadLimit, validateInstallationQuery, getInstallations);
+router.get("/grid-substations/:substationId/installations", verifyUserJwt, userReadLimit, validateSubstationPath, validateSubstationInstallationQuery, getInstallations);
 router.get("/installations/:installationId", verifyUserJwt, userReadLimit, validateInstallationPath, getInstallation);
 router.get("/installations/:installationId/last-reading", verifyUserJwt, userReadLimit, validateInstallationPath, getLastReading);
 router.get("/installations/:installationId/overview", verifyUserJwt, userReadLimit, validateInstallationPath, getOverview);
