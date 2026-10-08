@@ -1,6 +1,6 @@
-const { Province, District, GridSubstation } = require("../models");
-const { apiBaseUrl } = require("../config/env");
-const { publicUuid } = require("./user-principal");
+const { Province, District, GridSubstation } = require("../../models");
+const { apiBaseUrl } = require("../../config/env");
+const { publicUuid } = require("../../services/user-principal");
 
 class ProvinceFilterConflict extends Error {}
 

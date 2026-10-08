@@ -1,5 +1,5 @@
-const tokens = require("../services/device-tokens.service");
-const limits = require("../services/token-rate-limit.service");
+const tokens = require("./device-tokens.service");
+const limits = require("../../services/token-rate-limit.service");
 
 async function createDeviceToken(req, res) {
   const { meterId, deviceSecret } = req.deviceCredentials;

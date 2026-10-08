@@ -1,5 +1,5 @@
-const { parseRecordedAt } = require("./reading-request");
-const { sendError } = require("../utils/http-errors");
+const { parseRecordedAt } = require("../../utils/timestamps");
+const { sendError } = require("../../utils/http-errors");
 
 function validateReadingQuery(req, res, next) {
   const query = req.query;

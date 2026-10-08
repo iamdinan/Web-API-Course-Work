@@ -107,7 +107,7 @@ Send the user/admin bearer token to GET `/provinces`. Results follow the user's 
 
 ## Submit a device reading
 
-In Postman, set `baseUrl` to your API base URL, `installationId` to the ID returned by device login, and `deviceToken` to the access token from `/auth/device-tokens`. Create POST `{{baseUrl}}/installations/{{installationId}}/readings`, choose Bearer Token `{{deviceToken}}`, and Body, then raw, then JSON:
+Send the installation bearer token to POST `/installations/{installationId}/readings`, using the public installation ID returned by device login and a JSON body:
 
 ```json
 {"recordedAt":"2026-10-08T12:00:00+05:30","powerKw":3.5,"energyKwh":42,"voltageV":230}
@@ -128,9 +128,14 @@ Send a user/admin bearer token to GET `/installations/{installationId}/readings`
 | Path | Responsibility |
 | --- | --- |
 | `src/config/` | Environment configuration and database connection |
-| `src/routes/`, `src/controllers/` | Routing and HTTP responses |
-| `src/middleware/` | Common request, validation, and error handling |
-| `src/services/` | Authentication, scoped queries, shared rate limits, and transactional persistence |
+| `src/features/auth/` | User/device token routes, controllers, credential validation, and issuance services |
+| `src/features/readings/` | Reading routes, controllers, validation, public serialization, scoped queries, and transactional ingestion |
+| `src/features/provinces/` | Province routes, controllers, query validation, and scoped queries |
+| `src/features/health/` | Public liveness route and static response |
+| `src/routes/api.routes.js` | Central API router and OpenAPI endpoint |
+| `src/middleware/` | Shared JWT verification, installation ownership, rate-limit enforcement, and error handling |
+| `src/services/` | Shared password/JWT helpers, current-user principal construction, and MongoDB rate counters |
+| `src/utils/` | Shared HTTP errors and timestamp parsing |
 | `src/models/` | Mongoose schemas and shared model helpers |
 | `src/app.js` | Express application and API router mount |
 | `src/index.js` | Server startup and shutdown |

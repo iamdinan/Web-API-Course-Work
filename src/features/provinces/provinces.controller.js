@@ -1,5 +1,5 @@
 const { createHash } = require("node:crypto");
-const provinces = require("../services/provinces.service");
+const provinces = require("./provinces.service");
 
 async function getProvinces(req, res) {
   let body;

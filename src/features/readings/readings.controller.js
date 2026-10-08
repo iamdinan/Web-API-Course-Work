@@ -1,7 +1,7 @@
-const readings = require("../services/readings.service");
-const { apiBaseUrl } = require("../config/env");
+const readings = require("./readings.service");
+const { apiBaseUrl } = require("../../config/env");
 const { createHash } = require("node:crypto");
-const { sendError } = require("../utils/http-errors");
+const { sendError } = require("../../utils/http-errors");
 
 async function postReading(req, res) {
   try {

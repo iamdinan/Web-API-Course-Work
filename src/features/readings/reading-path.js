@@ -1,5 +1,5 @@
-const { publicUuid } = require("../services/user-principal");
-const { sendError } = require("../utils/http-errors");
+const { publicUuid } = require("../../services/user-principal");
+const { sendError } = require("../../utils/http-errors");
 
 function validateInstallationPath(req, res, next) {
   if (typeof req.params.installationId !== "string" || !publicUuid.test(req.params.installationId)) {

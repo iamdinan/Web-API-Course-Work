@@ -109,6 +109,11 @@ This file records choices, their reasons, and unresolved questions. Concrete sch
 - **Reason:** Concurrent ingestion must not produce a count from one dataset and a page from another. Public-ID tie-breaking gives deterministic ordering; a context-aware full-envelope ETag tracks filters, paging, count and current access.
 - **Time validator:** Omit collection Last-Modified without a reliable revision covering the entire response. A page's maximum receivedAt cannot establish when count, membership, links or authorized context changed.
 
+## D20 - Feature-based source organization
+
+- **Choice:** Group routes, controllers, validation, and feature services under `src/features`, while retaining shared models, configuration, authentication helpers, middleware, and utilities outside the features. The central router composes the implemented features.
+- **Reason:** Related endpoint code becomes easier to navigate without merging separate responsibilities. Shared security and persistence helpers retain one implementation; timestamp parsing is independent of POST middleware, and reading serialization has a dedicated owner.
+
 ## Pending decisions
 
 | Topic | Decision needed |

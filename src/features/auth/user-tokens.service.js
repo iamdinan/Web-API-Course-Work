@@ -1,7 +1,7 @@
-const { User } = require("../models");
-const { signAccessToken } = require("./access-tokens");
-const { currentUserPrincipal } = require("./user-principal");
-const { verifyPassword } = require("./passwords");
+const { User } = require("../../models");
+const { signAccessToken } = require("../../services/access-tokens");
+const { currentUserPrincipal } = require("../../services/user-principal");
+const { verifyPassword } = require("../../services/passwords");
 
 async function issueUserToken(email, password) {
   const user = await User.findOne({ email }).select("publicId role readScope provinceId districtId +passwordHash").lean();
