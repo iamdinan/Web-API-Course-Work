@@ -100,7 +100,7 @@ POST JSON `{"email":"<email>","password":"<password>"}` to `/auth/user-tokens`, 
 {"recordedAt":"2026-10-08T12:00:00+05:30","powerKw":3.5,"energyKwh":42,"voltageV":230}
 ```
 
-Use a previously unused measurement timestamp. Retrieve the returned Location with a jurisdiction-authorized user/admin token. Lists/history accept only their [documented queries](docs/API_DESIGN_RULES.md#resource-and-query-rules); small nested lists have no pagination. Summary energy is observed and may be incomplete; check incompleteEnergyInstallationCount. Historical seed dates can produce stale current power.
+Use a previously unused measurement timestamp. Retrieve the returned Location with a jurisdiction-authorized user/admin token. GET `/installations?status=active` or `?status=inactive` narrows installations within the authorized area; omission includes both. It combines with geography filters and pagination. Lists/history accept only their [documented queries](docs/API_DESIGN_RULES.md#resource-and-query-rules); the province list and small nested lists have no pagination. GET `/provinces` accepts no queries and returns only count/items within the current stored jurisdiction. Every endpoint without documented query options rejects supplied parameters with 400 INVALID_QUERY, including public endpoints, login and writes. Summary energy is observed and may be incomplete; check incompleteEnergyInstallationCount. Historical seed dates can produce stale current power.
 
 ## Manual verification
 

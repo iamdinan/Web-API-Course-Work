@@ -34,7 +34,7 @@ Public health GET returns `{ "status": "ok" }` with a stable strong ETag and `Ca
 
 - Use `/api/v1.0`, lowercase hyphenated segments, plural collections and public UUID IDs; nest children under parents. The verb-named district summary is a processing function. GET is safe; readings are append-only. No general update/PUT or user-management routes. Design targets Richardson Level 2.
 - Representations are JSON; honor Accept application/json and */*. Writes with bodies require application/json. Bodyless DELETE needs no Content-Type. Standard parser/negotiation rules apply throughout.
-- Path UUID v4 errors use 400 INVALID_REQUEST; query errors use 400 INVALID_QUERY. Documented query fields are single-valued; reject unknown/repeated fields. Installation write UUIDs must be lowercase. Endpoints explicitly accepting no queries reject supplied options. Installation detail/overview, substation detail and individual/latest reading routes advertise no query options but do not validate them.
+- Path UUID v4 errors use 400 INVALID_REQUEST; query errors use 400 INVALID_QUERY. Documented query fields are single-valued; reject unknown/repeated fields. Installation write UUIDs must be lowercase. Every endpoint without documented query parameters rejects all supplied options with 400 INVALID_QUERY (`This endpoint does not accept query parameters.`), including public endpoints, token exchanges and writes. Query errors use no-store without ETag/Last-Modified; query strings cannot override body fields or HTTP precondition headers.
 - Paging: offset is a nonnegative safe integer (default 0); limit is 1–200 (default 50); their sum must be safe. Filter before sort/page. Paginated envelopes are `{ "count": 0, "next": null, "previous": null, "items": [] }`; count is all authorized matches before paging. Links preserve filters/effective limit and configured prefix, changing offset. Beyond-end offsets retain count, empty items and next=null. Full nested lists return only count/items, count=items.length. Authorized empty lists return 200.
 - History uses from inclusive/to exclusive and requires from < to when both exist; timestamps follow [submission validation](#device-reading-submission). Encode positive-offset `+` as `%2B`. sort=timestamp|-timestamp (default -timestamp) orders recordedAt/publicId in the same direction. Geography filters are provinceId/districtId/substationId UUID v4 strings.
 
@@ -46,11 +46,11 @@ National analysts/admins read nationally; provincial analysts within their store
 
 Atomic resources outside jurisdiction return 403 FORBIDDEN; missing resources/ancestry or parent-child mismatches return 404 NOT_FOUND. Geography detail errors are `Province not found.`, `District not found.` or `Substation not found.`; forbidden messages are `The province/district/substation is outside your permitted jurisdiction.` (use the applicable noun). Installation errors are `Installation not found.` and `The installation is outside your permitted jurisdiction.` Reading-specific 404 exceptions appear below. Broken assigned district ancestry yields 403 for an existing requested province.
 
-Explicit regional installation/reading filters: missing geography/ancestry 404, outside jurisdiction 403; authorize each filter before contradictory authorized relationships return 400 INVALID_QUERY. Missing implicit geography yields an empty scope. A parent province filter never broadens district scope. The [province list](#protected-province-list) has a separate empty-result policy.
+Explicit regional installation/reading filters: missing geography/ancestry 404, outside jurisdiction 403; authorize each filter before contradictory authorized relationships return 400 INVALID_QUERY. Missing implicit geography yields an empty scope. A parent province filter never broadens district scope.
 
 ## Rate limits
 
-[Architecture](architecture.md#rate-limits) owns shared counter storage, thresholds and keys. All protected user/admin GETs consume the shared 120/minute User budget before conditional responses. Login consumes 5 attempts/15 minutes per IP and normalized email/exact meter ID after validation but before credential verification/lookup; invalid shapes do not count. Device ingestion consumes 30/minute per installation and IP after authentication/ownership/body validation; duplicates count. Admin writes share 30/minute per admin after authorization/path/body validation; missing targets, duplicate meters, malformed/stale preconditions, no-ops and history conflicts count.
+[Architecture](architecture.md#rate-limits) owns shared counter storage, thresholds and keys. All protected user/admin GETs consume the shared 120/minute User budget before conditional responses. Login consumes 5 attempts/15 minutes per IP and normalized email/exact meter ID after validation but before credential verification/lookup; invalid bodies or query parameters do not count. Device ingestion consumes 30/minute per installation and IP after authentication/ownership/body/query validation; duplicates count. Admin writes share 30/minute per admin after authorization/path/body/query validation; missing targets, duplicate meters, malformed/stale preconditions, no-ops and history conflicts count.
 
 Exhaustion returns 429 RATE_LIMIT_EXCEEDED with integer Retry-After seconds. Counter failures fail closed. Do not replace shared limits with per-process limits.
 
@@ -90,7 +90,7 @@ Duplicate installation/timestamp: 409 DUPLICATE_READING without overwrite. Retur
 
 ## Protected province list
 
-GET `/provinces`: province id/name items, sorted name/publicId ascending, paginated. Accept geography filters plus offset/limit. Unknown/out-of-scope filter targets return 200 empty scoped lists; conflicting ancestry among visible targets returns 400 INVALID_QUERY. Apply scope before count/page and scoped ETag.
+GET `/provinces`: complete jurisdiction-scoped `{count, items}` with id/name items sorted name/publicId ascending. Count equals items.length; omit next/previous. National/admin users see all provinces, provincial users their assigned province, district users their assigned district's parent province. Missing/broken assigned ancestry gives 200 with count=0 and items=[]. Accept no query parameters: geography filters, offset/limit and any other options return 400 INVALID_QUERY. Resolve scope/list in one read-only snapshot; apply shared authentication/read limits before query validation and private scoped ETags/conditional 304. Errors use no-store without validators; omit Last-Modified.
 
 ## Province details
 
@@ -110,7 +110,7 @@ GET `/districts/{districtId}/grid-substations`: full count/items, no queries/pag
 
 ## Grid substation details
 
-GET `/grid-substations/{substationId}`: only id/districtId/name without related collections; shared substation access/cache rules. No query options are advertised; supplied queries are ignored by the current route.
+GET `/grid-substations/{substationId}`: only id/districtId/name without related collections; shared substation access/cache rules. Supplied query parameters return 400 INVALID_QUERY.
 
 ## Individual reading
 
@@ -122,7 +122,7 @@ GET `/installations/{installationId}/last-reading`: authorize before lookup, inc
 
 ## Installation list
 
-GET `/installations`: geography filters plus offset/limit only; fixed public UUID ascending order. Both statuses; id/substationId/meterId/status items in paginated envelopes. Reject status/sort/time filters. Explicit regional-filter errors and shared scoped cache rules apply. Read authorized ancestry/count/page in one snapshot; collection ETag differs from the detail write validator.
+GET `/installations`: geography filters, optional single-valued status=active|inactive and offset/limit; fixed public UUID ascending order. Omission includes both statuses. Invalid, empty, differently cased or repeated status values return 400 INVALID_QUERY. Apply geography/jurisdiction and status before count/page; paging links preserve status and ETags include the effective query. Items contain id/substationId/meterId/status in paginated envelopes. Reject sort/time filters. Explicit regional-filter errors and shared scoped cache rules apply. Read authorized ancestry/count/page in one snapshot; collection ETag differs from the detail write validator.
 
 ## Substation installation list
 
@@ -142,7 +142,7 @@ GET `/installations/{installationId}/readings`: shared installation access, incl
 
 ## Regional reading history
 
-GET `/readings`: installation-history parameters plus geography filters, retaining inactive history and applying explicit regional-filter errors. Without filters, scope follows stored jurisdiction. Read ancestry/count/page in one snapshot. Same reading envelope/order/cache rules; links preserve geography/time filters/effective sort/limit. Province-list empty-filter policy is unchanged.
+GET `/readings`: installation-history parameters plus geography filters, retaining inactive history and applying explicit regional-filter errors. Without filters, scope follows stored jurisdiction. Read ancestry/count/page in one snapshot. Same reading envelope/order/cache rules; links preserve geography/time filters/effective sort/limit.
 
 ## District generation summary
 

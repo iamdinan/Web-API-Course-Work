@@ -8,7 +8,7 @@ Express serves JSON under `/api/v1.0`; production HTTPS terminates at the deploy
 
 `src/features/` groups auth, provinces, districts, grid-substations, installations, readings, district-summary and health. Keep routes thin; separate validation, authorization, HTTP controllers and business/persistence services. Static health needs only its route. Readings owns public reading serialization; auth shares credential validation. `src/routes/api.routes.js` composes features and serves OpenAPI.
 
-Shared middleware owns JWT/ownership verification, rate enforcement and errors; shared services own passwords/JWTs, current principals, ancestry/access and counters. Utilities own timestamps, list responses, HTTP errors, public-path/query rejection and response validators; models/configuration remain shared. Extract helpers when multiple features/setup tools need them.
+Shared middleware owns JWT/ownership verification, rate enforcement and errors; shared services own passwords/JWTs, current principals, ancestry/access and counters. Utilities own timestamps, list responses, HTTP errors, public-path/query rejection and response validators; models/configuration remain shared. Extract helpers when multiple features/setup tools need them. All query-free routes reuse rejectQueryParameters; protected reads keep authentication/read-limit/path checks first, while writes validate access/body/query before write counters. Public health/OpenAPI also reject queries. Exact HTTP errors belong to the HTTP contract.
 
 ## Stored data
 
@@ -158,7 +158,7 @@ Initialize declared indexes, then use mongoose.connection.transaction with snaps
 
 ### Verified users and province access
 
-verifyUserJwt requires actor=user, reloads the current User without credentials and validates role/scope/assignment. Attach only stored identity/access and derive admin permissions again. Province queries are unrestricted nationally, constrained to the assigned province provincially, or resolve the assigned district's parent province for district users. Apply geographic filters within that scope before count/page; missing ancestry has no visible province. Province-list filter policy differs from explicit regional-filter errors.
+verifyUserJwt requires actor=user, reloads the current User without credentials and validates role/scope/assignment. Attach only stored identity/access and derive admin permissions again. Province queries are unrestricted nationally, constrained to the assigned province provincially, or resolve the assigned district's parent province for district users. Return the complete authorized province list with count derived from records, without queries or pagination. Resolve district ancestry/list in one read-only snapshot; missing/broken ancestry has no visible province. Apply public projections, name/publicId order and principal-scoped validators afterward.
 
 ### Province detail access
 
@@ -190,7 +190,7 @@ After authorizedInstallation, use findOne by installation UUID ordered recordedA
 
 ### Installation list
 
-Regional geography resolution returns eligible substation UUIDs; bind both SolarInstallation count/page to `{substationId: {$in: authorizedSubstationIds}}`, including nationally. Resolve geography/count/page in one snapshot and project only publicId/substationId/meterId/status through installationBody. No reading queries. listBody supplies prefix-aware filter-preserving links.
+Regional geography resolution returns eligible substation UUIDs; bind both SolarInstallation count/page to `{substationId: {$in: authorizedSubstationIds}}` plus optional validated status, including nationally. Omitted status includes active/inactive records; the top-level list alone accepts this query. Preserve status in paging links and scoped ETag context. Resolve geography/count/page in one snapshot and project only publicId/substationId/meterId/status through installationBody. No reading queries. listBody supplies prefix-aware filter-preserving links.
 
 ### Substation installation collection
 
@@ -210,7 +210,7 @@ listReadings authorizes installation ancestry, then queries count and sorted/off
 
 ### Regional reading history
 
-In one snapshot, resolve explicit filters/ancestors and current jurisdiction before comparing filter relationships. Resolve eligible province/district/substation/installation UUIDs with restricted credential-free queries, then bind reading count/page to those IDs and the time window. Missing implicit ancestry yields an empty scope. Share history query validation/serialization/pagination; keep regional filter resolution separate from province-list policy.
+In one snapshot, resolve explicit filters/ancestors and current jurisdiction before comparing filter relationships. Resolve eligible province/district/substation/installation UUIDs with restricted credential-free queries, then bind reading count/page to those IDs and the time window. Missing implicit ancestry yields an empty scope. Share history query validation/serialization/pagination; province listing accepts no filters.
 
 ## Rate limits
 

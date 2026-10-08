@@ -15,13 +15,7 @@ async function getProvince(req, res) {
 }
 
 async function getProvinces(req, res) {
-  let body;
-  try {
-    body = await provinces.listProvinces(req.user, req.provinceQuery);
-  } catch (error) {
-    if (!(error instanceof provinces.ProvinceFilterConflict)) throw error;
-    return res.status(400).json({ code: "INVALID_QUERY", message: "Geographic filters have conflicting ancestry.", details: [] });
-  }
+  const body = await provinces.listProvinces(req.user);
   // The scoped principal participates in the validator even for identical bodies.
   return sendPrivateJson(res, body, { user: req.user, body });
 }

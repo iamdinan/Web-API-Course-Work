@@ -11,6 +11,7 @@ const config = require("../src/config/jwt");
 const app = require("../src/app");
 const { apiBaseUrl } = require("../src/config/env");
 const models = require("../src/models");
+const mongoose = require("mongoose");
 const limits = require("../src/services/token-rate-limit.service");
 const { verifyUserJwt } = require("../src/middleware/verify-user-jwt");
 let origin, server;
@@ -27,6 +28,10 @@ function token(id, claims = {}, options = {}) {
 }
 
 function fixtures(t) {
+  t.mock.method(mongoose.connection, "transaction", async (callback, options) => {
+    assert.deepEqual(options, { readConcern: { level: "snapshot" } });
+    return callback(null);
+  });
   const provinces = ["Alpha", "Beta", "Gamma"].map(name => ({ publicId: randomUUID(), name, _id: "internal" }));
   const districts = [0, 0, 1].map((index, number) => ({ publicId: randomUUID(), provinceId: provinces[index].publicId, name: `District ${number}` }));
   const substations = districts.map(district => ({ publicId: randomUUID(), districtId: district.publicId }));
@@ -39,6 +44,7 @@ function fixtures(t) {
     return {
       offset: 0, max: Infinity,
       select() { return this; },
+      session() { return this; },
       sort() { records.sort((a, b) => a.name.localeCompare(b.name) || a.publicId.localeCompare(b.publicId)); return this; },
       skip(offset) { this.offset = offset; return this; }, limit(max) { this.max = max; return this; },
       lean() { return Promise.resolve(records.slice(this.offset, this.offset + this.max)); },
@@ -50,7 +56,7 @@ function fixtures(t) {
     return { select(fields) { assert.equal(fields.includes("passwordHash"), false); return this; }, lean: async () => state.user };
   });
   for (const [Model, records] of [[models.Province, provinces], [models.District, districts], [models.GridSubstation, substations]]) {
-    t.mock.method(Model, "findOne", filter => ({ select() { return this; }, lean: async () => records.find(record => matches(record, filter)) || null }));
+    t.mock.method(Model, "findOne", filter => ({ select() { return this; }, session() { return this; }, lean: async () => records.find(record => matches(record, filter)) || null }));
     t.mock.method(Model, "find", filter => query(records.filter(record => matches(record, filter))));
     t.mock.method(Model, "countDocuments", async filter => records.filter(record => matches(record, filter)).length);
   }
@@ -104,13 +110,15 @@ test("verification attaches only current stored identity/access and rejects remo
   await invalid.text();
 });
 
-test("national/admin lists, provincial/district restrictions, counts and filters use stored assignments", async t => {
-  const { state, provinces, districts, substations } = fixtures(t);
+test("complete province lists and counts use current national/admin/provincial/district assignments", async t => {
+  const { state, provinces, districts } = fixtures(t);
   const accessToken = token(state.user.publicId);
   for (const role of ["user", "admin"]) {
     state.user.role = role;
     const body = await (await get(accessToken)).json();
     assert.equal(body.count, 3);
+    assert.deepEqual(Object.keys(body), ["count", "items"]);
+    assert.equal(body.count, body.items.length);
     assert.deepEqual(body.items.map(item => item.id), provinces.map(province => province.publicId));
     assert.deepEqual(Object.keys(body.items[0]).sort(), ["id", "name"]);
   }
@@ -118,24 +126,16 @@ test("national/admin lists, provincial/district restrictions, counts and filters
   const provincial = await (await get(accessToken)).json();
   assert.equal(provincial.count, 1);
   assert.equal(provincial.items[0].id, provinces[0].publicId);
-  for (const filter of [`provinceId=${provinces[1].publicId}`, `districtId=${districts[2].publicId}`, `substationId=${substations[2].publicId}`]) {
-    assert.deepEqual(await (await get(accessToken, `?${filter}`)).json(), { count: 0, next: null, previous: null, items: [] });
-  }
   delete state.user.provinceId;
   state.user.readScope = "district";
   state.user.districtId = districts[0].publicId;
   const district = await (await get(accessToken)).json();
   assert.equal(district.count, 1);
   assert.equal(district.items[0].id, provinces[0].publicId);
-  // Another district within the same province must remain inaccessible.
-  assert.equal((await (await get(accessToken, `?districtId=${districts[1].publicId}`)).json()).count, 0);
-  assert.equal((await (await get(accessToken, `?substationId=${substations[1].publicId}`)).json()).count, 0);
-  assert.equal((await (await get(accessToken, `?districtId=${districts[0].publicId}&substationId=${substations[0].publicId}`)).json()).count, 1);
   // The same unexpired token must immediately reflect a new stored scope.
   delete state.user.districtId;
   state.user.readScope = "national";
   assert.equal((await (await get(accessToken)).json()).count, 3);
-  assert.equal((await (await get(accessToken, `?provinceId=${randomUUID()}&districtId=${districts[0].publicId}`)).json()).count, 0);
   state.user.readScope = "district";
   state.user.districtId = districts[0].publicId;
   delete districts[0].provinceId;
@@ -148,26 +148,19 @@ test("national/admin lists, provincial/district restrictions, counts and filters
   assert.equal((await (await get(accessToken)).json()).count, 0);
 });
 
-test("pagination retains filters and invalid/conflicting query values return standard errors", async t => {
+test("province list rejects every query option, including former filters and pagination", async t => {
   const { state, provinces, districts, substations } = fixtures(t);
   const accessToken = token(state.user.publicId);
-  const first = await (await get(accessToken, "?limit=1")).json();
-  assert.equal(first.count, 3);
-  assert.equal(first.items.length, 1);
-  assert.equal(first.next, `${apiBaseUrl}/provinces?offset=1&limit=1`);
-  const second = await (await get(accessToken, "?offset=1&limit=1")).json();
-  assert.equal(second.items[0].id, provinces[1].publicId);
-  assert.equal(second.previous, `${apiBaseUrl}/provinces?offset=0&limit=1`);
-  const page = await (await get(accessToken, `?provinceId=${provinces[0].publicId}&offset=1&limit=1`)).json();
-  assert.equal(page.count, 1);
-  assert.deepEqual(page.items, []);
-  assert.ok(page.previous.includes(`provinceId=${provinces[0].publicId}`));
-  for (const query of ["?limit=0", "?limit=201", "?offset=-1", "?offset=1.5", "?limit=1&limit=2", "?provinceId=invalid", "?extra=1",
+  for (const query of ["?limit=1", "?offset=0", "?limit=0", "?limit=201", "?offset=-1", "?offset=1.5", "?limit=1&limit=2", "?provinceId=invalid", "?extra=1", "?sort=name", "?status=active",
+    `?provinceId=${provinces[0].publicId}`, `?districtId=${districts[0].publicId}`, `?substationId=${substations[0].publicId}`,
     `?provinceId=${provinces[1].publicId}&districtId=${districts[0].publicId}`,
     `?districtId=${districts[0].publicId}&substationId=${substations[2].publicId}`]) {
     const response = await get(accessToken, query);
     assert.equal(response.status, 400);
-    assert.equal((await response.json()).code, "INVALID_QUERY");
+    assert.deepEqual(await response.json(), { code: "INVALID_QUERY", message: "This endpoint does not accept query parameters.", details: [] });
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.equal(response.headers.get("etag"), null);
+    assert.equal(response.headers.get("last-modified"), null);
   }
 });
 
@@ -231,5 +224,8 @@ test("OpenAPI documents the protected province list and bearer authentication", 
   assert.deepEqual(spec.paths["/provinces"].get.security, [{ UserBearer: [] }]);
   assert.equal(spec.components.securitySchemes.UserBearer.scheme, "bearer");
   assert.equal(spec.paths["/provinces"].post, undefined);
+  assert.deepEqual(spec.paths["/provinces"].get.parameters.filter(parameter => parameter.in === "query"), []);
+  assert.deepEqual(spec.components.schemas.ProvinceList.required, ["count", "items"]);
+  assert.deepEqual(Object.keys(spec.components.schemas.ProvinceList.properties), ["count", "items"]);
   for (const status of ["200", "304", "400", "401", "406", "429", "500"]) assert.ok(spec.paths["/provinces"].get.responses[status]);
 });

@@ -14,6 +14,7 @@ function validatePublicPath(...parameters) {
 
 function rejectQueryParameters(req, res, next) {
   if (Object.keys(req.query).length) {
+    res.locals.omitErrorValidators = true;
     return sendError(res, 400, { code: "INVALID_QUERY", message: "This endpoint does not accept query parameters.", details: [] });
   }
   next();

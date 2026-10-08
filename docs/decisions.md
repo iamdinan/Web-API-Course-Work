@@ -84,7 +84,7 @@ Group routes/controllers/validation/services by feature while keeping shared sec
 
 ## D21 - Scoped regional reading history
 
-Resolve regional eligible installation UUIDs through geography in the count/page snapshot and reuse history helpers. Apply scope before queries to prevent disclosure; broad parent filters intersect district scope. Separate resolver preserves province-list empty-filter behavior while regional filters give explicit missing/forbidden/conflict errors.
+Resolve regional eligible installation UUIDs through geography in the count/page snapshot and reuse history helpers. Apply scope before queries to prevent disclosure; broad parent filters intersect district scope. The separate resolver originally preserved province-list empty-filter behavior while regional filters gave explicit missing/forbidden/conflict errors; D37 removes province-list queries without changing regional filter behavior.
 
 ## D22 - Latest measurement lookup
 
@@ -145,6 +145,18 @@ User defined inactive as indefinite blocking until explicit admin reactivation a
 ## D36 - Guarded installation hard deletion
 
 Reuse installationForWrite/precondition utilities and shared admin budget for bodyless deletion of empty active/inactive installations. Compare precondition, force parent write, then check history/delete in one transaction; retries repeat all checks. Separate/snapshot-only guards can orphan readings. Earlier ingestion blocks deletion; earlier deletion blocks reading commit. Preconditions precede history conflict. New replacement UUIDs exclude old tokens. [HTTP rules](API_DESIGN_RULES.md#installation-deletion) own responses/body framing; [architecture](architecture.md#admin-installation-management) owns persistence, README manual checks.
+
+## D37 - Complete scoped province list
+
+Remove province-list geography filters and pagination: nine provinces fit a complete list, and geography detail routes already provide navigation. Return only count/items, reject all query parameters and retain current stored jurisdiction, shared read limits and scoped ETags. Resolve ancestry/list in one snapshot and derive count from items to prevent mismatches. This supersedes D13/D21's province-filter design; regional installation/reading queries remain unchanged.
+
+## D38 - Reject unsupported query parameters consistently
+
+Reject all supplied query parameters on endpoints with no query options. Silent ignoring can make an unsupported filter appear effective; shared validation catches mistakes and makes the API contract consistent. Preserve authentication/access/body checks and read-limit ordering; invalid write/login queries consume no credential/write budget. Query errors are no-store without validators, preventing conditional requests from hiding mistakes.
+
+## D39 - Optional installation status filter
+
+Add status=active|inactive only to the paginated top-level installation list so analysts/admins can find operating or suspended installations. Omission retains both statuses; apply status within jurisdiction/geography before count/page and include it in links/validator context. Reject invalid/repeated values. Nested substation lists retain their full query-free collection contract. This extends D25 without changing fixed UUID ordering or stored access.
 
 ## Pending decisions
 
