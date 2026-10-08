@@ -9,4 +9,10 @@ const validateInstallationRequest = tokenRequest({
     req.installationInput = { substationId: body.substationId, meterId: body.meterId.trim(), deviceSecret: body.deviceSecret };
   },
 });
-module.exports = { validateInstallationRequest };
+const validateStatusRequest = tokenRequest({
+  fields: ["status"],
+  valid: body => ["active", "inactive"].includes(body.status),
+  message: 'Provide only status with value "active" or "inactive".',
+  attach(req, body) { req.installationStatus = body.status; },
+});
+module.exports = { validateInstallationRequest, validateStatusRequest };

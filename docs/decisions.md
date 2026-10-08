@@ -186,7 +186,20 @@ This file records choices, their reasons, and unresolved questions. Concrete sch
 ## D33 - Admin installation provisioning
 
 - **Choice:** Implement POST /installations using current stored admin authorization, the existing validated model/public serializer/strong ETag and shared salted scrypt helper. Accept independent supplied device secrets; development prefix derivation remains confined to dataset seeding. Meter IDs follow existing model trimming; secrets retain exact characters. No new credential complexity/length policy is imposed.
-- **Reason:** Current role prevents stale JWT privileges. The unique meter index reserves inactive meters and handles concurrent duplicate requests. Reusing the detail representation makes the creation ETag usable on subsequent GET. Adopt the documented initial shared 30 writes/minute per admin, counting valid-shaped attempts. No pending decision blocks this requested implementation; PATCH and DELETE remain planned.
+- **Reason:** Current role prevents stale JWT privileges. The unique meter index reserves inactive meters and handles concurrent duplicate requests. Reusing the detail representation makes the creation ETag usable on subsequent GET. Adopt the documented initial shared 30 writes/minute per admin, counting valid-shaped attempts. No pending decision blocks this requested implementation; DELETE remains planned.
+
+## D34 - Transactional installation deactivation
+
+The initial deactivation-only scope below is superseded by D35 for allowed status values; its atomicity rationale remains applicable.
+
+- **Choice:** Implement PATCH accepting only status=inactive, with optional strong If-Match against the shared detail ETag. Load and compare inside the same snapshot/majority transaction as the installation update. Force a temporary shared-parent write for every successful PATCH, including no-ops, and remove the lock before commit. Retry conflicts by rerunning resource lookup and precondition comparison.
+- **Reason:** Reading ingestion already writes this parent document; deactivation must serialize with it so a previously authenticated request cannot ingest after deactivation wins. No-op updates also need concurrency protection so an old successful comparison cannot survive a concurrent public-field change. Preserve credentials/relationships/history and keep unchanged public representations byte-identical. Strong tag lists/wildcard, weak-tag rejection, syntax errors and missing-resource precedence follow the existing HTTP contract. Reuse the initial shared 30/minute per-admin write budget with creation. DELETE/reactivation remain outside this implementation.
+
+## D35 - Admin reactivation (approved 2026-10-08)
+
+- **Choice:** User defined inactive as blocked indefinitely until an admin explicitly reactivates the installation and requested PATCH in both directions. Accept exactly one status field with active or inactive; preserve credentials, relationships, identity and history. Keep the same strong If-Match, real parent-write transactions (including no-ops), current stored-admin role and shared 30/minute admin-write limit. Rename the derived admin permission to installation-status-update; existing JWT claims cannot override current-role authorization.
+- **Token behavior:** No device JWT format/lifetime changes or credential rotation. Inactive installations cannot log in or write. Reactivation restores access: unexpired device tokens work until their original exp, while expired tokens remain invalid and require login. This is the user-approved lifecycle behavior, not permanent token revocation.
+- **Reason:** One reversible status supports maintenance/suspension and indefinite blocking without losing meter identity or readings. Status changes serialize with ingestion; stale If-Match still fails even for either no-op status. This replaces prior deactivation-only restrictions in D34 and the operational contract. DELETE remains outside this implementation.
 
 ## Pending decisions
 

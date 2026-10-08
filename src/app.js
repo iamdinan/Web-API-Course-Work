@@ -13,7 +13,8 @@ app.use(apiBaseUrl, (req, res, next) => {
   if (req.method === 'POST' && /^\/installations\/[^/]+\/readings\/?$/i.test(req.path)) {
     res.set('Cache-Control', 'no-store');
   }
-  if (req.method === 'POST' && /^\/installations\/?$/i.test(req.path)) {
+  if ((req.method === 'POST' && /^\/installations\/?$/i.test(req.path)) ||
+      (req.method === 'PATCH' && /^\/installations\/[^/]+\/?$/i.test(req.path))) {
     res.set('Cache-Control', 'no-store');
     res.locals.omitErrorValidators = true;
   }

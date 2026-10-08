@@ -1343,10 +1343,10 @@ integration("installation details recheck current user jurisdiction and shared r
   assert.equal(failed.headers.etag, undefined);
 });
 
-test("OpenAPI installation details document public metadata, strong validators and GET only", () => {
+test("OpenAPI installation details document public metadata and strong read validators alongside PATCH", () => {
   const spec = require("../docs/openapi.json");
   const resource = spec.paths["/installations/{installationId}"];
-  assert.deepEqual(Object.keys(resource), ["get"]);
+  assert.deepEqual(Object.keys(resource), ["get", "patch"]);
   assert.deepEqual(resource.get.security, [{ UserBearer: [] }]);
   assert.deepEqual(resource.get.parameters.filter(p => p.in === "path").map(p => p.name), ["installationId"]);
   for (const status of [200, 304, 400, 401, 403, 404, 406, 429, 500]) assert.ok(resource.get.responses[status]);

@@ -25,7 +25,7 @@ Each child has one parent; a parent may have no children. An installation may ha
 
 - Meter identity belongs to the installation. A meter supplies readings for its own installation; users analyze data within their jurisdiction.
 - User roles are `user` and `admin`. Regional users have a province or district assignment; admins have national scope without regional assignment. User has no active attribute.
-- Installation status is `active` or `inactive`. Inactive installations retain their identity and history but cannot supply new readings; their meter identity remains reserved.
+- Installation status is `active` or `inactive`. Inactive installations retain their identity and history but cannot supply new readings; their meter identity remains reserved. They stay blocked until an admin explicitly reactivates them; reactivation preserves identity and history.
 - Admins manage installation creation, deactivation, and removal of installations without readings. An installation with readings must be preserved. Removing an empty installation releases its meter identity; a replacement has a new identifier.
 - Each reading is immutable. The latest measurement is derived from history.
 - Cumulative kWh is a meter counter. Daily energy comes from counter changes with reset handling, rather than the sum of raw counter values.

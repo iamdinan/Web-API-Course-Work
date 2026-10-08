@@ -231,7 +231,7 @@ integration("persistence failures are sanitized without credentials or validator
   assert.equal(await models.SolarInstallation.countDocuments({}), 1);
 });
 
-test("OpenAPI documents implemented creation, public response and admin policy without PATCH/DELETE", () => {
+test("OpenAPI documents implemented creation, public response and admin policy without DELETE", () => {
   const spec = require("../docs/openapi.json");
   const operation = spec.paths["/installations"].post;
   assert.deepEqual(operation.security, [{ UserBearer: [] }]);
@@ -243,7 +243,334 @@ test("OpenAPI documents implemented creation, public response and admin policy w
   assert.equal(operation.responses[201].content["application/json"].schema.$ref, "#/components/schemas/SolarInstallation");
   for (const name of ["Location", "ETag", "Cache-Control"]) assert.ok(operation.responses[201].headers[name]);
   for (const status of [400, 401, 403, 404, 406, 409, 413, 415, 429, 500]) assert.ok(operation.responses[status]);
-  assert.equal(spec.paths["/installations/{installationId}"].patch, undefined);
+  assert.ok(spec.paths["/installations/{installationId}"].patch);
   assert.equal(spec.paths["/installations/{installationId}"].delete, undefined);
+});
+
+function patch(access, input = { status: "inactive" }, ifMatch, id = installationId, headers = {}) {
+  return fetch(`${origin}/installations/${id}`, { method: "PATCH", headers: {
+    "Content-Type": "application/json", ...(access ? { Authorization: `Bearer ${access}` } : {}),
+    ...(ifMatch !== undefined ? { "If-Match": ifMatch } : {}), ...headers,
+  }, body: input === undefined ? undefined : JSON.stringify(input) });
+}
+async function installationSnapshot() {
+  return models.SolarInstallation.collection.findOne({ publicId: installationId });
+}
+async function currentTag(access) {
+  return (await rawGet(`/installations/${installationId}`, access, {})).headers.etag;
+}
+const readingInput = { recordedAt: new Date("2026-10-08T06:30:00Z"), powerKw: 3, energyKwh: 10, voltageV: 230 };
+const { createReading } = require("../src/features/readings/readings.service");
+const { updateInstallationStatus } = require("../src/features/installations/installations.service");
+
+integration("PATCH deactivates and repeats without changing credentials, relationships, history or public representation", async () => {
+  const { access } = await fixture();
+  const secret = " test provisioning secret ";
+  await models.SolarInstallation.updateOne({ publicId: installationId }, { deviceCredentialHash: await require("../src/services/passwords").hashPassword(secret) });
+  const login = () => fetch(`${origin}/auth/device-tokens`, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ meterId: "TEST-METER", deviceSecret: secret }) });
+  const activeLogin = await login();
+  assert.equal(activeLogin.status, 200);
+  const deviceAccess = (await activeLogin.json()).access_token;
+  await createReading(installationId, readingInput);
+  const before = await installationSnapshot();
+  const history = await models.GenerationReading.collection.find({ installationId }).toArray();
+  const oldTag = await currentTag(access);
+  const substation = await models.GridSubstation.findOne({ publicId: before.substationId });
+  const summaryPath = `/summarize-district-generation?districtId=${substation.districtId}`;
+  const oldList = await rawGet("/installations", access, {});
+  const oldOverview = await rawGet(`/installations/${installationId}/overview`, access, {});
+  const oldSummary = await rawGet(summaryPath, access, {});
+  assert.equal(oldSummary.body.freshInstallationCount + oldSummary.body.staleInstallationCount, 1);
+  const response = await patch(access);
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.deepEqual(body, { id: installationId, substationId: before.substationId, meterId: before.meterId, status: "inactive" });
+  const tag = response.headers.get("etag");
+  assert.notEqual(tag, oldTag);
+  assert.match(tag, /^"[a-f0-9]{64}"$/);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.equal(response.headers.get("last-modified"), null);
+  const after = await installationSnapshot();
+  assert.deepEqual(after, { ...before, status: "inactive" });
+  const repeat = await patch(access);
+  assert.equal(repeat.status, 200);
+  assert.deepEqual(await repeat.json(), body);
+  assert.equal(repeat.headers.get("etag"), tag);
+  assert.deepEqual(await installationSnapshot(), after);
+  assert.deepEqual(await models.GenerationReading.collection.find({ installationId }).toArray(), history);
+  const retained = await rawGet(`/installations/${installationId}/readings`, access, {});
+  assert.equal(retained.status, 200);
+  assert.equal(retained.body.count, 1);
+  assert.equal(await currentTag(access), tag);
+  const newList = await rawGet("/installations", access, {});
+  const newOverview = await rawGet(`/installations/${installationId}/overview`, access, {});
+  const newSummary = await rawGet(summaryPath, access, {});
+  assert.notEqual(newList.headers.etag, oldList.headers.etag);
+  assert.equal(newList.body.items[0].status, "inactive");
+  assert.notEqual(newOverview.headers.etag, oldOverview.headers.etag);
+  assert.equal(newOverview.body.installation.status, "inactive");
+  assert.deepEqual(newOverview.body.latestReading, oldOverview.body.latestReading);
+  assert.notEqual(newSummary.headers.etag, oldSummary.headers.etag);
+  assert.equal(newSummary.body.freshInstallationCount + newSummary.body.staleInstallationCount, 0);
+  assert.equal(newSummary.body.todayEnergyKwh, oldSummary.body.todayEnergyKwh);
+  assert.equal(newSummary.body.incompleteEnergyInstallationCount, oldSummary.body.incompleteEnergyInstallationCount);
+  const inactiveLogin = await login();
+  assert.equal(inactiveLogin.status, 403);
+  assert.equal((await inactiveLogin.json()).code, "INSTALLATION_INACTIVE");
+  const rejected = await fetch(`${origin}/installations/${installationId}/readings`, { method: "POST",
+    headers: { Authorization: `Bearer ${deviceAccess}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ ...readingInput, recordedAt: "2026-10-08T06:45:00Z" }) });
+  assert.equal(rejected.status, 403);
+  assert.equal((await rejected.json()).code, "INSTALLATION_INACTIVE");
+  assert.deepEqual(await models.GenerationReading.collection.find({ installationId }).toArray(), history);
+});
+
+integration("PATCH authenticates current admin before input/preconditions and rejects invalid bodies and paths without mutation", async () => {
+  const { access, user } = await fixture();
+  const before = await installationSnapshot();
+  for (const denied of [null, "invalid", token(), token({}, { expiresIn: -1 })]) {
+    const response = await patch(denied, {}, "bad", "bad");
+    await errorResponse(response, 401, "UNAUTHORIZED");
+    assert.equal(response.headers.get("www-authenticate"), "Bearer");
+  }
+  const ordinary = await analyst();
+  await errorResponse(await patch(ordinary.access, {}, "bad", "bad"), 403, "FORBIDDEN");
+  await models.User.updateOne({ publicId: user.publicId }, { role: "user" });
+  await errorResponse(await patch(access), 403, "FORBIDDEN");
+  await models.User.updateOne({ publicId: user.publicId }, { role: "admin" });
+  await errorResponse(await patch(access, { status: "inactive" }, "bad", "bad"), 400, "INVALID_REQUEST");
+  for (const input of [{}, [], null, { status: "retired" }, { status: "INACTIVE" }, { status: " inactive " }, { status: false },
+    ...["id", "meterId", "substationId", "deviceSecret", "deviceCredentialHash"].map(field => ({ status: "inactive", [field]: "forbidden" }))]) {
+    await errorResponse(await patch(access, input, "bad"), 400, input === null ? "INVALID_JSON" : "INVALID_REQUEST");
+  }
+  const empty = await fetch(`${origin}/installations/${installationId}`, { method: "PATCH", headers: { Authorization: `Bearer ${access}`, "Content-Type": "application/json" } });
+  await errorResponse(empty, 400, "INVALID_REQUEST");
+  await errorResponse(await patch(access, { status: "inactive" }, undefined, installationId, { "Content-Type": "text/plain" }), 415, "UNSUPPORTED_MEDIA_TYPE");
+  await errorResponse(await patch(access, { status: "inactive" }, "bad", randomUUID()), 404, "NOT_FOUND");
+  assert.deepEqual(await installationSnapshot(), before);
+  assert.equal(await models.GenerationReading.countDocuments({}), 0);
+});
+
+integration("PATCH strong If-Match accepts lists and wildcard, rejects weak/stale tags even on no-op, and preserves data on failure", async () => {
+  const { access } = await fixture();
+  await createReading(installationId, readingInput);
+  const before = await installationSnapshot();
+  const history = await models.GenerationReading.collection.find({ installationId }).toArray();
+  const activeTag = await currentTag(access);
+  for (const header of ['"stale"', `W/${activeTag}`, 'W/"other", "stale"']) {
+    await errorResponse(await patch(access, { status: "inactive" }, header), 412, "PRECONDITION_FAILED");
+    assert.deepEqual(await installationSnapshot(), before);
+  }
+  for (const header of ["", "unquoted", '"unterminated', '"tag",', ',"tag"', '*, "tag"', '"tag" "other"', 'w/"tag"']) {
+    await errorResponse(await patch(access, { status: "inactive" }, header), 400, "INVALID_REQUEST");
+    assert.deepEqual(await installationSnapshot(), before);
+  }
+  const matched = await patch(access, { status: "inactive" }, `W/${activeTag}, "unrelated", ${activeTag}`);
+  assert.equal(matched.status, 200);
+  const inactiveTag = matched.headers.get("etag");
+  const inactive = await installationSnapshot();
+  await errorResponse(await patch(access, { status: "inactive" }, activeTag), 412, "PRECONDITION_FAILED");
+  assert.deepEqual(await installationSnapshot(), inactive);
+  for (const header of [inactiveTag, `"other", ${inactiveTag}`, "*"]) {
+    const repeat = await patch(access, { status: "inactive" }, header);
+    assert.equal(repeat.status, 200);
+    assert.equal(repeat.headers.get("etag"), inactiveTag);
+    assert.deepEqual(await installationSnapshot(), inactive);
+  }
+  assert.deepEqual(await models.GenerationReading.collection.find({ installationId }).toArray(), history);
+});
+
+integration("PATCH shares the creation admin-write budget and sanitizes transaction failures", async t => {
+  const { access, input } = await fixture();
+  for (let i = 0; i < 29; i++) await errorResponse(await create({ ...input, substationId: randomUUID() }, access), 404, "NOT_FOUND");
+  assert.equal((await patch(access)).status, 200);
+  const before = await installationSnapshot();
+  const limited = await patch(access);
+  await errorResponse(limited, 429, "RATE_LIMIT_EXCEEDED");
+  assert.ok(Number(limited.headers.get("retry-after")) > 0);
+  assert.deepEqual(await installationSnapshot(), before);
+  const other = await analyst({ role: "admin" });
+  t.mock.method(mongoose.connection, "transaction", async () => { throw new Error("private transaction details"); });
+  await errorResponse(await patch(other.access), 500, "INTERNAL_SERVER_ERROR");
+});
+
+integration("PATCH retries stale comparisons after write conflicts for either status, including no-ops", async t => {
+  const { access } = await fixture();
+  for (const status of ["inactive", "active"]) for (const noOp of [false, true]) {
+    await models.SolarInstallation.updateOne({ publicId: installationId }, { status: noOp ? status : status === "active" ? "inactive" : "active" });
+    const tag = await currentTag(access);
+    let release, reached;
+    const gate = new Promise(resolve => { release = resolve; });
+    const ready = new Promise(resolve => { reached = resolve; });
+    const original = models.SolarInstallation.findOneAndUpdate;
+    let attempts = 0;
+    const mock = t.mock.method(models.SolarInstallation, "findOneAndUpdate", function (...args) {
+      const query = original.apply(this, args);
+      const execute = query.exec;
+      query.exec = async function (...execArgs) {
+        attempts++;
+        if (attempts === 1) { reached(); await gate; }
+        return execute.apply(this, execArgs);
+      };
+      return query;
+    });
+    const pending = patch(access, { status }, tag);
+    await ready;
+    // The competing write commits after PATCH read/compared its snapshot.
+    if (noOp) await models.SolarInstallation.collection.updateOne({ publicId: installationId }, { $set: { meterId: `CHANGED-${randomUUID()}` } });
+    else await models.SolarInstallation.updateOne({ publicId: installationId }, { status });
+    const committed = await installationSnapshot();
+    release();
+    await errorResponse(await pending, 412, "PRECONDITION_FAILED");
+    mock.mock.restore();
+    assert.deepEqual(await installationSnapshot(), committed);
+  }
+});
+
+integration("reactivation retains data, restores device login/unexpired-token writes, and never revives expired tokens", async () => {
+  const { access } = await fixture();
+  const secret = " reusable device provisioning secret ";
+  await models.SolarInstallation.updateOne({ publicId: installationId }, { deviceCredentialHash: await require("../src/services/passwords").hashPassword(secret) });
+  const before = await installationSnapshot();
+  const activeTag = await currentTag(access);
+  const deviceAccess = token();
+  const claims = jwt.decode(deviceAccess);
+  await createReading(installationId, readingInput);
+  const history = await models.GenerationReading.collection.find({ installationId }).toArray();
+  assert.equal((await patch(access)).status, 200);
+  const inactive = await installationSnapshot();
+  const inactiveTag = await currentTag(access);
+  const submit = accessToken => fetch(`${origin}/installations/${installationId}/readings`, { method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ ...readingInput, recordedAt: "2026-10-08T06:45:00Z" }) });
+  assert.equal((await submit(deviceAccess)).status, 403);
+  const ordinary = await analyst();
+  await errorResponse(await patch(ordinary.access, { status: "active" }), 403, "FORBIDDEN");
+  await errorResponse(await patch(access, { status: "active" }, activeTag), 412, "PRECONDITION_FAILED");
+  await errorResponse(await patch(access, { status: "active" }, `W/${inactiveTag}`), 412, "PRECONDITION_FAILED");
+  assert.deepEqual(await installationSnapshot(), inactive);
+  const activated = await patch(access, { status: "active" }, `"other", ${inactiveTag}`);
+  assert.equal(activated.status, 200);
+  assert.equal((await activated.json()).status, "active");
+  assert.equal(activated.headers.get("etag"), activeTag);
+  assert.deepEqual(await installationSnapshot(), before);
+  assert.deepEqual(await models.GenerationReading.collection.find({ installationId }).toArray(), history);
+  for (const condition of [undefined, activeTag, "*"]) {
+    const repeat = await patch(access, { status: "active" }, condition);
+    assert.equal(repeat.status, 200);
+    assert.equal(repeat.headers.get("etag"), activeTag);
+    assert.deepEqual(await installationSnapshot(), before);
+  }
+  await errorResponse(await patch(access, { status: "active" }, inactiveTag), 412, "PRECONDITION_FAILED");
+  const login = await fetch(`${origin}/auth/device-tokens`, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ meterId: before.meterId, deviceSecret: secret }) });
+  assert.equal(login.status, 200);
+  const newToken = (await login.json()).access_token;
+  assert.equal(jwt.decode(newToken).sub, installationId);
+  assert.equal((await submit(token({}, { expiresIn: -1 }))).status, 401);
+  assert.equal((await submit(deviceAccess)).status, 201);
+  assert.equal(jwt.decode(deviceAccess).exp, claims.exp);
+  assert.equal(await models.GenerationReading.countDocuments({ installationId }), 2);
+  const substation = await models.GridSubstation.findOne({ publicId: before.substationId });
+  const summary = await rawGet(`/summarize-district-generation?districtId=${substation.districtId}`, access, {});
+  assert.equal(summary.body.freshInstallationCount + summary.body.staleInstallationCount, 1);
+  assert.equal((await rawGet(`/installations/${installationId}/overview`, access, {})).body.installation.status, "active");
+});
+
+integration("PATCH failure after parent mutation rolls back status and temporary lock", async t => {
+  const { access } = await fixture();
+  await createReading(installationId, readingInput);
+  const before = await installationSnapshot();
+  const history = await models.GenerationReading.collection.find({ installationId }).toArray();
+  const original = models.SolarInstallation.updateOne;
+  t.mock.method(models.SolarInstallation, "updateOne", function (...args) {
+    if (args[1].$unset?._ingestionLock !== undefined) throw new Error("private cleanup diagnostics");
+    return original.apply(this, args);
+  });
+  await errorResponse(await patch(access), 500, "INTERNAL_SERVER_ERROR");
+  assert.deepEqual(await installationSnapshot(), before);
+  assert.deepEqual(await models.GenerationReading.collection.find({ installationId }).toArray(), history);
+});
+
+integration("PATCH committing first makes already-authorized ingestion retry and reject inactive state", async t => {
+  let release, reached;
+  const gate = new Promise(resolve => { release = resolve; });
+  const ready = new Promise(resolve => { reached = resolve; });
+  const original = models.SolarInstallation.findOneAndUpdate;
+  t.mock.method(models.SolarInstallation, "findOneAndUpdate", function (...args) {
+    const query = original.apply(this, args), execute = query.exec;
+    query.exec = async function (...execArgs) {
+      const result = await execute.apply(this, execArgs);
+      reached(); await gate; return result;
+    };
+    return query;
+  });
+  const deactivation = updateInstallationStatus(installationId, "inactive");
+  await ready;
+  let attempted;
+  const attempt = new Promise(resolve => { attempted = resolve; });
+  const originalUpdate = models.SolarInstallation.updateOne;
+  t.mock.method(models.SolarInstallation, "updateOne", function (...args) {
+    if (args[0].status === "active") attempted();
+    return originalUpdate.apply(this, args);
+  });
+  const rejected = assert.rejects(createReading(installationId, readingInput), error => error.status === 403 && error.code === "INSTALLATION_INACTIVE");
+  await attempt; release(); await deactivation; await rejected;
+  assert.equal(await models.GenerationReading.countDocuments({}), 0);
+  assert.equal((await installationSnapshot()).status, "inactive");
+});
+
+integration("ingestion committing first makes PATCH retry while preserving the new history", async t => {
+  const { access } = await fixture();
+  const tag = await currentTag(access);
+  let release, reached;
+  const gate = new Promise(resolve => { release = resolve; });
+  const ready = new Promise(resolve => { reached = resolve; });
+  const originalSave = models.GenerationReading.prototype.save;
+  t.mock.method(models.GenerationReading.prototype, "save", async function (...args) {
+    const result = await originalSave.apply(this, args); reached(); await gate; return result;
+  });
+  const ingestion = createReading(installationId, readingInput);
+  await ready;
+  let attempted, attempts = 0;
+  const attempt = new Promise(resolve => { attempted = resolve; });
+  const original = models.SolarInstallation.findOneAndUpdate;
+  t.mock.method(models.SolarInstallation, "findOneAndUpdate", function (...args) {
+    attempts++; attempted(); return original.apply(this, args);
+  });
+  const pending = patch(access, { status: "inactive" }, tag);
+  await attempt; release(); await ingestion;
+  assert.equal((await pending).status, 200);
+  assert.ok(attempts >= 2);
+  assert.equal(await models.GenerationReading.countDocuments({ installationId }), 1);
+  assert.equal((await installationSnapshot()).status, "inactive");
+  assert.equal((await installationSnapshot())._ingestionLock, undefined);
+});
+
+test("If-Match parser respects opaque commas, strong tags, whitespace and strict syntax", () => {
+  const { parseIfMatch, ifMatchAllows } = require("../src/features/installations/installation-precondition");
+  assert.equal(ifMatchAllows(parseIfMatch(undefined), '"tag"'), true);
+  assert.equal(ifMatchAllows(parseIfMatch(' W/"tag", "comma,inside", "tag" '), '"tag"'), true);
+  assert.equal(ifMatchAllows(parseIfMatch('W/"tag"'), '"tag"'), false);
+  assert.equal(ifMatchAllows(parseIfMatch("*"), '"tag"'), true);
+  for (const invalid of ["", "tag", '"a",', '*, "a"', '"a";"b"', '"a\\"b"', '"line\nbreak"']) assert.throws(() => parseIfMatch(invalid));
+});
+
+test("OpenAPI PATCH documents strict status updates, optional If-Match, shared limits and public ETag", () => {
+  const spec = require("../docs/openapi.json");
+  const resource = spec.paths["/installations/{installationId}"];
+  assert.deepEqual(Object.keys(resource), ["get", "patch"]);
+  const operation = resource.patch;
+  assert.deepEqual(operation.security, [{ UserBearer: [] }]);
+  const input = spec.components.schemas.InstallationStatusInput;
+  assert.equal(input.additionalProperties, false);
+  assert.deepEqual(input.required, ["status"]);
+  assert.deepEqual(input.properties, { status: { type: "string", enum: ["active", "inactive"] } });
+  assert.equal(operation.parameters.find(p => p.name === "If-Match").required, false);
+  assert.equal(operation.responses[200].headers.ETag.$ref, "#/components/headers/InstallationETag");
+  assert.equal(operation.responses[200].content["application/json"].schema.$ref, "#/components/schemas/SolarInstallation");
+  for (const status of [400, 401, 403, 404, 406, 412, 413, 415, 429, 500]) assert.ok(operation.responses[status]);
+  assert.equal(resource.delete, undefined);
 });
 
