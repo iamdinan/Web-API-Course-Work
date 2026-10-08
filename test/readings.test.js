@@ -206,7 +206,7 @@ integration("OpenAPI exposes only the reading POST with public schemas and requi
   assert.deepEqual(Object.keys(individual), ["get"]);
   assert.deepEqual(individual.get.security, [{ UserBearer: [] }]);
   assert.deepEqual(individual.get.parameters.filter(parameter => parameter.in === "path").map(parameter => parameter.name), ["installationId", "readingId"]);
-  for (const status of [200, 304, 400, 401, 404, 406, 429, 500]) assert.ok(individual.get.responses[status]);
+  for (const status of [200, 304, 400, 401, 403, 404, 406, 429, 500]) assert.ok(individual.get.responses[status]);
   assert.equal(individual.get.responses[304].content, undefined);
   for (const status of [200, 304]) {
     for (const header of ["ETag", "Last-Modified", "Cache-Control"]) assert.ok(individual.get.responses[status].headers[header]);
@@ -327,7 +327,7 @@ integration("single-reading GET serves all authorized scopes with POST-identical
   assert.equal(await count(), 1);
 });
 
-integration("jurisdiction and both URL identities gate reading lookup and return identical private 404s", async t => {
+integration("jurisdiction rejects with 403 before reading lookup; missing and mismatched identities return 404", async t => {
   const created = await createdReading();
   const localDistrict = await models.District.findOne({});
   const foreignProvince = await models.Province.create({ name: "Other province" });
@@ -342,7 +342,13 @@ integration("jurisdiction and both URL identities gate reading lookup and return
   for (const fields of [{ readScope: "province", provinceId: foreignProvince.publicId },
     { readScope: "district", districtId: foreignDistrict.publicId }, { readScope: "district", districtId: sibling.publicId }]) {
     const { access } = await analyst(fields);
-    responses.push(await read(created.body.id, access, installationId, { "If-None-Match": created.etag }));
+    const response = await read(created.body.id, access, installationId, { "If-None-Match": created.etag });
+    assert.equal(response.status, 403);
+    assert.deepEqual(response.body, { code: "FORBIDDEN", message: "The installation is outside your permitted jurisdiction.", details: [] });
+    assert.equal(response.headers["cache-control"], "no-store");
+    assert.equal(response.headers["last-modified"], undefined);
+    assert.notEqual(response.headers.etag, created.etag);
+    assert.equal((await read(randomUUID(), access)).status, 403);
   }
   assert.equal(lookups, 0);
   const { access } = await analyst();
@@ -413,7 +419,7 @@ integration("stale user jurisdiction and shared read limits are checked before 3
   assert.equal((await read(created.body.id, access)).status, 200);
   const foreignProvince = await models.Province.create({ name: "Changed jurisdiction" });
   await models.User.updateOne({ publicId: user.publicId }, { $set: { readScope: "province", provinceId: foreignProvince.publicId } });
-  assert.equal((await read(created.body.id, access, installationId, { "If-None-Match": created.etag })).status, 404);
+  assert.equal((await read(created.body.id, access, installationId, { "If-None-Match": created.etag })).status, 403);
   const { access: adminAccess, user: admin } = await analyst({ role: "admin" });
   const { createHash } = require("node:crypto");
   await Counter.create({ _id: `user-read:${createHash("sha256").update(admin.publicId).digest("hex")}`,

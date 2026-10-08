@@ -178,7 +178,7 @@ The first protected route is `GET /provinces`. National users/admins have an unr
 
 ### Individual reading access
 
-`findReading` resolves the URL installation to its substation, district, and province using public UUID references and credential-free projections. Provincial scope constrains the district query by the stored User province UUID; district scope requires the substation's district to match the stored User district UUID. National analysts/admins have no regional constraint. Every ancestor must exist; invalid/missing ancestry fails closed. Installation status does not restrict historical reads.
+`findReading` resolves the URL installation to its substation, district, and province using public UUID references and credential-free projections. After confirming complete ancestry, provincial scope compares the district's province against the stored User province UUID; district scope compares the substation's district against the stored User district UUID. Out-of-jurisdiction installations are rejected before reading lookup using the HTTP contract. National analysts/admins have no regional constraint. Every ancestor must exist; invalid/missing ancestry fails closed. Installation status does not restrict historical reads.
 
 Only after ancestry authorization, query GenerationReading with both `{ publicId: readingId, installationId }`. Project only reading public fields and serialize through the same deterministic public representation as insertion, independent of BSON field order. Generate response validators only after access and resource identity are established. The [HTTP contract](API_DESIGN_RULES.md#individual-reading) owns errors, caching, and conditional-request behavior.
 

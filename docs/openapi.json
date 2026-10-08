@@ -692,7 +692,7 @@
       "get": {
         "operationId": "getInstallationReading",
         "summary": "Read an individual installation reading within current user jurisdiction",
-        "description": "Requires user/admin JWT authentication and current stored jurisdiction. Resolve installation, substation, district and province before reading lookup or validators. National analysts/admins read nationally; provincial/district analysts read only within assigned ancestry. Inactive installations retain readable history. Find readings by both installationId and readingId. Missing, mismatched and out-of-jurisdiction resources return the same 404. Shared user-read limit is 120/minute per user, including admins and conditional requests. The exact public JSON and strong ETag match POST; private caching and authorization on each request prevent validators bypassing access.",
+        "description": "Requires user/admin JWT authentication and current stored jurisdiction. Resolve installation, substation, district and province before reading lookup or validators. National analysts/admins read nationally; provincial/district analysts read only within assigned ancestry. Inactive installations retain readable history. Find readings by both installationId and readingId. Existing installations outside current jurisdiction return 403 before reading lookup; missing ancestry/resources and reading/installation mismatches return 404. Shared user-read limit is 120/minute per user, including admins and conditional requests. The exact public JSON and strong ETag match POST; private caching and authorization on each request prevent validators bypassing access.",
         "security": [
           {
             "UserBearer": []
@@ -805,8 +805,28 @@
               }
             }
           },
+          "403": {
+            "description": "Existing installation outside the current stored analyst jurisdiction (FORBIDDEN). Rejected before reading lookup even if the supplied reading ID is absent.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "code": "FORBIDDEN",
+                  "message": "The installation is outside your permitted jurisdiction.",
+                  "details": []
+                }
+              }
+            }
+          },
           "404": {
-            "description": "Reading not found (NOT_FOUND): missing ancestry/installation/reading, out of jurisdiction, or reading belongs to another installation. Identical public error for all cases.",
+            "description": "Reading not found (NOT_FOUND): missing ancestry/installation/reading or reading belongs to another installation.",
             "headers": {
               "Cache-Control": {
                 "$ref": "#/components/headers/NoStore"

@@ -19,19 +19,25 @@ async function findReading(user, installationId, readingId) {
   if (!installation || !publicUuid.test(installation.substationId)) return null;
   const substation = await GridSubstation.findOne({ publicId: installation.substationId }).select("districtId -_id").lean();
   if (!substation || !publicUuid.test(substation.districtId)) return null;
-  const districtFilter = { publicId: substation.districtId };
-  if (user.readScope === "province") districtFilter.provinceId = user.provinceId;
-  else if (user.readScope === "district") {
-    if (substation.districtId !== user.districtId) return null;
-  } else if (user.readScope !== "national") return null;
-  const district = await District.findOne(districtFilter).select("provinceId -_id").lean();
+  const district = await District.findOne({ publicId: substation.districtId }).select("provinceId -_id").lean();
   if (!district || !publicUuid.test(district.provinceId)) return null;
   const province = await Province.findOne({ publicId: district.provinceId }).select("publicId -_id").lean();
   if (!province) return null;
+  if ((user.readScope === "province" && district.provinceId !== user.provinceId) ||
+      (user.readScope === "district" && substation.districtId !== user.districtId) ||
+      !["national", "province", "district"].includes(user.readScope)) {
+    throw new ReadingAccessError();
+  }
   // Scope is established before loading the reading. Bind BOTH URL identities.
   const reading = await GenerationReading.findOne({ publicId: readingId, installationId })
     .select("publicId installationId recordedAt powerKw energyKwh voltageV receivedAt -_id");
   return reading ? readingBody(reading) : null;
+}
+
+class ReadingAccessError extends Error {
+  constructor() {
+    super("The installation is outside your permitted jurisdiction.");
+  }
 }
 
 class ReadingWriteError extends Error {
@@ -73,4 +79,4 @@ async function createReading(installationId, input) {
   }
 }
 
-module.exports = { createReading, findReading, ReadingWriteError };
+module.exports = { createReading, findReading, ReadingWriteError, ReadingAccessError };

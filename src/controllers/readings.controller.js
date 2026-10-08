@@ -17,7 +17,13 @@ async function postReading(req, res) {
 }
 
 async function getReading(req, res) {
-  const body = await readings.findReading(req.user, req.params.installationId, req.params.readingId);
+  let body;
+  try {
+    body = await readings.findReading(req.user, req.params.installationId, req.params.readingId);
+  } catch (error) {
+    if (!(error instanceof readings.ReadingAccessError)) throw error;
+    return res.status(403).json({ code: "FORBIDDEN", message: error.message, details: [] });
+  }
   if (!body) {
     return res.status(404).json({ code: "NOT_FOUND", message: "Reading not found.", details: [] });
   }

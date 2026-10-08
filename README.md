@@ -116,7 +116,7 @@ Use a timestamp not already stored for that installation. Use the returned Locat
 
 ## Read an individual reading
 
-Send the user/admin bearer token to GET `/installations/{installationId}/readings/{readingId}`, using both public UUIDs or the Location returned by submission. Historical readings remain available for inactive installations within the user's jurisdiction. See the [individual-reading contract](docs/API_DESIGN_RULES.md#individual-reading) for responses and conditional requests. Reading lists remain planned.
+Send the user/admin bearer token to GET `/installations/{installationId}/readings/{readingId}`, using both public UUIDs or the Location returned by submission. Historical readings remain available for inactive installations within the user's jurisdiction. Out-of-jurisdiction requests return 403; missing readings and reading/installation mismatches return 404. See the [individual-reading contract](docs/API_DESIGN_RULES.md#individual-reading) for responses and conditional requests. Reading lists remain planned.
 
 ## Project layout
 
