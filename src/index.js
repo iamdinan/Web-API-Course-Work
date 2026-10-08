@@ -8,15 +8,15 @@ async function startServer() {
 
   const server = app.listen(port);
   await once(server, "listening");
-  const apiUrl = `http://localhost:${port}${apiBaseUrl}`;
 
   console.log(
     [
       "Solar Generation API started",
-      `  API base:  ${apiUrl}`,
-      `  Health:    ${apiUrl}/health`,
-      `  OpenAPI:   ${apiUrl}/openapi.json`,
-      `  Docs:      ${apiUrl}/docs`,
+      `  Listening on port ${port}`,
+      `  API base:  ${apiBaseUrl}`,
+      `  Health:    ${apiBaseUrl}/health`,
+      `  OpenAPI:   ${apiBaseUrl}/openapi.json`,
+      `  Docs:      ${apiBaseUrl}/docs`,
     ].join("\n"),
   );
 

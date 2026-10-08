@@ -166,9 +166,13 @@ Public documentation now uses the existing shared MongoDB counter at its documen
 
 Expose the generation summary at `/districts/{districtId}/generation-summary` to follow noun-based resource naming and district hierarchy. Use shared path UUID validation and reject all query parameters. Keep the existing authenticated, jurisdiction-scoped summary service, calculations, response fields, read limits and cache behavior. The district identity comes only from the path.
 
+## D42 - Render deployment
+
+The API is deployed on Render at [https://slsea-api.onrender.com](https://slsea-api.onrender.com/), with `/api/v1.0` as the API prefix. The [README](../README.md#current-implementation) provides the public health, Swagger UI and OpenAPI URLs. Hosting and the public HTTPS URL are settled; trusted proxy/IP configuration remains to be confirmed.
+
 ## Pending decisions
 
 | Topic | Decision needed |
 | --- | --- |
-| Deployment | Unresolved for now: choose provider, HTTPS termination and trusted proxy/IP configuration. |
+| Proxy configuration | Confirm trusted proxy/IP configuration for the Render deployment. |
 | Swagger browser verification | Verify Swagger UI rendering, endpoint order, authorization and Try it out in a real browser. |
