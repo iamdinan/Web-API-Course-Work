@@ -34,7 +34,7 @@ Public health GET returns `{ "status": "ok" }` with a stable strong ETag and `Ca
 
 `POST /auth/user-tokens` accepts an `application/json` object containing exactly `email` and `password` strings. Trim/lowercase email; require a valid email and a non-whitespace password, preserving the password's exact characters. Reject missing/unknown fields, arrays, objects in place of strings, and empty values with 400 `INVALID_REQUEST`; malformed JSON uses 400 `INVALID_JSON`. Unsupported Content-Type uses 415 `UNSUPPORTED_MEDIA_TYPE`.
 
-Success returns 200 `{ "access_token": "<signed JWT>", "token_type": "Bearer", "expires_in": 900 }`, where the lifetime is configured in seconds. Return `Cache-Control: no-store` and `Pragma: no-cache` for this POST, including errors; successful token responses have no ETag or Last-Modified. No refresh token is issued.
+Success returns 200 `{ "access_token": "<signed JWT>", "token_type": "Bearer", "expires_in": 900, "userId": "<public UUID>" }`, where the lifetime is configured in seconds. `userId` is the authenticated stored User public UUID and equals the JWT `sub`; it is returned for both users and admins. Return `Cache-Control: no-store` and `Pragma: no-cache` for this POST, including errors; successful token responses have no ETag or Last-Modified. No refresh token is issued.
 
 Unknown users and password mismatches return the same 401 `INVALID_CREDENTIALS` with message `Invalid email or password.` and `WWW-Authenticate: Bearer`. Never include submitted credentials, stored hashes, or internal IDs in errors. Unexpected persistence/signing failures return the standard 500 error.
 
@@ -43,6 +43,8 @@ After request validation and before password verification, apply shared 5-attemp
 ## Device token exchange
 
 `POST /auth/device-tokens` accepts an `application/json` object containing exactly `meterId` and `deviceSecret` as nonempty, non-whitespace strings. Preserve both values exactly. Missing/unknown fields and invalid types use 400 `INVALID_REQUEST` with message `Provide only a nonempty meterId and deviceSecret.` Parser, media type, negotiation, successful token response, and no-store/Pragma behavior follow the [user-token exchange](#user-token-exchange).
+
+Successful device login returns the same token fields as user login with `installationId` instead of `userId`: the authenticated stored installation public UUID, equal to JWT `sub`. No MongoDB `_id` or credentials are returned.
 
 Unknown meters and secret mismatches return identical 401 `INVALID_CREDENTIALS` errors with message `Invalid meter ID or device secret.` and `WWW-Authenticate: Bearer`. Verify the submitted secret before evaluating status: valid credentials for an inactive installation return 403 `INSTALLATION_INACTIVE` with message `Inactive installations cannot obtain device tokens.` Neither error returns a token. Unexpected persistence/signing failures use the standard sanitized 500.
 

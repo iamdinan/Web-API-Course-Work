@@ -12,7 +12,10 @@ async function issueDeviceToken(meterId, deviceSecret) {
   if (installation.status !== "active" || !publicUuid.test(installation.publicId)) {
     throw new Error("Invalid stored installation identity or status.");
   }
-  return signAccessToken(installation.publicId, { actor: "installation", scope: "installation-write" });
+  return {
+    ...signAccessToken(installation.publicId, { actor: "installation", scope: "installation-write" }),
+    installationId: installation.publicId,
+  };
 }
 
 module.exports = { issueDeviceToken };

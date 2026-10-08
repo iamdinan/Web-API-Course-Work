@@ -149,7 +149,7 @@
         },
         "responses": {
           "200": {
-            "$ref": "#/components/responses/TokenIssued"
+            "$ref": "#/components/responses/UserTokenIssued"
           },
           "400": {
             "description": "Malformed JSON or invalid request fields.",
@@ -432,7 +432,7 @@
         },
         "responses": {
           "200": {
-            "$ref": "#/components/responses/TokenIssued"
+            "$ref": "#/components/responses/DeviceTokenIssued"
           },
           "400": {
             "description": "Malformed JSON or invalid request fields.",
@@ -872,6 +872,58 @@
             "description": "Finite nonnegative JSON number; no upper bound currently defined."
           }
         }
+      },
+      "UserAccessToken": {
+        "type": "object",
+        "required": [
+          "access_token",
+          "token_type",
+          "expires_in",
+          "userId"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "access_token": {
+            "$ref": "#/components/schemas/AccessToken/properties/access_token"
+          },
+          "token_type": {
+            "$ref": "#/components/schemas/AccessToken/properties/token_type"
+          },
+          "expires_in": {
+            "$ref": "#/components/schemas/AccessToken/properties/expires_in"
+          },
+          "userId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Authenticated public UUID from the stored principal; equals the JWT sub claim."
+          }
+        }
+      },
+      "DeviceAccessToken": {
+        "type": "object",
+        "required": [
+          "access_token",
+          "token_type",
+          "expires_in",
+          "installationId"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "access_token": {
+            "$ref": "#/components/schemas/AccessToken/properties/access_token"
+          },
+          "token_type": {
+            "$ref": "#/components/schemas/AccessToken/properties/token_type"
+          },
+          "expires_in": {
+            "$ref": "#/components/schemas/AccessToken/properties/expires_in"
+          },
+          "installationId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Authenticated public UUID from the stored principal; equals the JWT sub claim."
+          }
+        }
       }
     },
     "securitySchemes": {
@@ -928,21 +980,6 @@
       }
     },
     "responses": {
-      "TokenIssued": {
-        "description": "Credentials verified; signed access token",
-        "headers": {
-          "Cache-Control": {
-            "$ref": "#/components/headers/NoStore"
-          }
-        },
-        "content": {
-          "application/json": {
-            "schema": {
-              "$ref": "#/components/schemas/AccessToken"
-            }
-          }
-        }
-      },
       "TokenNotAcceptable": {
         "description": "Accept excludes JSON; no body",
         "headers": {
@@ -1036,6 +1073,36 @@
       },
       "NotAcceptable": {
         "description": "Accept excludes JSON; no body"
+      },
+      "UserTokenIssued": {
+        "description": "Credentials verified; signed access token",
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/NoStore"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/UserAccessToken"
+            }
+          }
+        }
+      },
+      "DeviceTokenIssued": {
+        "description": "Credentials verified; signed access token",
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/NoStore"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/DeviceAccessToken"
+            }
+          }
+        }
       }
     }
   }

@@ -61,12 +61,14 @@ test("admin/national/province/district logins issue verifiable short-lived datab
     assert.equal(response.headers.get("cache-control"), "no-store");
     assert.equal(response.headers.get("etag"), null);
     const body = await response.json();
-    assert.deepEqual(Object.keys(body).sort(), ["access_token", "expires_in", "token_type"]);
+    assert.deepEqual(Object.keys(body).sort(), ["access_token", "expires_in", "token_type", "userId"]);
+    assert.equal(body.userId, current.publicId);
     assert.equal(body.expires_in, 900);
     assert.equal(body.token_type, "Bearer");
     const claims = jwt.verify(body.access_token, config.signingKey, { algorithms: ["HS256"], issuer: config.issuer, audience: config.audience });
     assert.equal(claims.actor, "user");
     assert.equal(claims.sub, current.publicId);
+    assert.equal(body.userId, claims.sub);
     for (const key of ["role", "readScope", "provinceId", "districtId"]) assert.equal(claims[key], current[key]);
     assert.equal(claims.exp - claims.iat, 900);
     assert.equal(Object.hasOwn(claims, "passwordHash"), false);
@@ -154,6 +156,9 @@ test("OpenAPI exposes only the implemented user-token exchange with request/erro
   assert.deepEqual(operation.security, []);
   assert.deepEqual(operation.requestBody.content["application/json"].schema.required, ["email", "password"]);
   assert.equal(operation.requestBody.content["application/json"].schema.additionalProperties, false);
+  assert.equal(operation.responses[200].$ref, "#/components/responses/UserTokenIssued");
+  assert.equal(spec.components.schemas.UserAccessToken.additionalProperties, false);
+  assert.ok(spec.components.schemas.UserAccessToken.required.includes("userId"));
   for (const status of ["200", "400", "401", "406", "413", "415", "429", "500"]) assert.ok(operation.responses[status]);
   assert.ok(spec.paths["/auth/device-tokens"].post);
 });

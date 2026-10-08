@@ -11,7 +11,7 @@ async function issueUserToken(email, password) {
   if (!principal) throw new Error("Invalid stored user authorization.");
   const { id, ...authorization } = principal;
   const claims = { actor: "user", ...authorization };
-  return signAccessToken(id, claims);
+  return { ...signAccessToken(id, claims), userId: id };
 }
 
 module.exports = { issueUserToken };

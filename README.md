@@ -93,11 +93,11 @@ The command verifies all configured accounts before committing its transaction a
 
 ## User login
 
-POST JSON containing only `email` and `password` to `/auth/user-tokens`. Save the returned `access_token` and send it as `Authorization: Bearer <access_token>` on user requests. See the [user-token contract](docs/API_DESIGN_RULES.md#user-token-exchange) and [OpenAPI](docs/openapi.json) for responses and limits.
+POST JSON containing only `email` and `password` to `/auth/user-tokens`. The response includes the authenticated public `userId`. Save the returned `access_token` and send it as `Authorization: Bearer <access_token>` on user requests. See the [user-token contract](docs/API_DESIGN_RULES.md#user-token-exchange) and [OpenAPI](docs/openapi.json) for responses and limits.
 
 ## Device login
 
-POST JSON containing only `meterId` and `deviceSecret` to `/auth/device-tokens`. Submit the original secret; for the development seed it is the configured prefix followed by the meter ID. Save the returned installation `access_token` for reading submissions. See the [device-token contract](docs/API_DESIGN_RULES.md#device-token-exchange) for responses and limits.
+POST JSON containing only `meterId` and `deviceSecret` to `/auth/device-tokens`. Submit the original secret; for the development seed it is the configured prefix followed by the meter ID. Save the returned installation `access_token` and public `installationId` for reading submissions. See the [device-token contract](docs/API_DESIGN_RULES.md#device-token-exchange) for responses and limits.
 
 ## Protected province list
 
@@ -105,7 +105,7 @@ Send the user/admin bearer token to GET `/provinces`. Results follow the user's 
 
 ## Submit a device reading
 
-In Postman, set `baseUrl` to your API base URL, `installationId` to the device JWT's public `sub`, and `deviceToken` to the access token from `/auth/device-tokens`. Create POST `{{baseUrl}}/installations/{{installationId}}/readings`, choose Bearer Token `{{deviceToken}}`, and Body, then raw, then JSON:
+In Postman, set `baseUrl` to your API base URL, `installationId` to the ID returned by device login, and `deviceToken` to the access token from `/auth/device-tokens`. Create POST `{{baseUrl}}/installations/{{installationId}}/readings`, choose Bearer Token `{{deviceToken}}`, and Body, then raw, then JSON:
 
 ```json
 {"recordedAt":"2026-10-08T12:00:00+05:30","powerKw":3.5,"energyKwh":42,"voltageV":230}

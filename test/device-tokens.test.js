@@ -58,12 +58,14 @@ test("device login signs only installation claims and the issued token cannot re
   assert.equal(response.headers.get("etag"), null);
   assert.equal(response.headers.get("last-modified"), null);
   const body = await response.json();
-  assert.deepEqual(Object.keys(body).sort(), ["access_token", "expires_in", "token_type"]);
+  assert.deepEqual(Object.keys(body).sort(), ["access_token", "expires_in", "installationId", "token_type"]);
+  assert.equal(body.installationId, installation.publicId);
   assert.equal(body.token_type, "Bearer");
   assert.equal(body.expires_in, 600);
   const claims = jwt.verify(body.access_token, config.signingKey, { algorithms: [config.algorithm], issuer: config.issuer, audience: config.audience });
   assert.deepEqual(Object.keys(claims).sort(), ["actor", "aud", "exp", "iat", "iss", "scope", "sub"]);
   assert.equal(claims.sub, installation.publicId);
+  assert.equal(body.installationId, claims.sub);
   assert.equal(claims.actor, "installation");
   assert.equal(claims.scope, "installation-write");
   assert.equal(claims.exp - claims.iat, 600);
@@ -177,6 +179,9 @@ test("OpenAPI documents the implemented device exchange and errors", async () =>
   assert.deepEqual(schema.required, ["meterId", "deviceSecret"]);
   assert.equal(schema.additionalProperties, false);
   assert.equal(schema.properties.deviceSecret.writeOnly, true);
+  assert.equal(operation.responses[200].$ref, "#/components/responses/DeviceTokenIssued");
+  assert.equal(spec.components.schemas.DeviceAccessToken.additionalProperties, false);
+  assert.ok(spec.components.schemas.DeviceAccessToken.required.includes("installationId"));
   for (const status of ["200", "400", "401", "403", "406", "413", "415", "429", "500"]) assert.ok(operation.responses[status]);
   assert.equal(spec.paths["/installations/{installationId}/readings"].get, undefined);
 });
