@@ -8,9 +8,17 @@ Student index: COBSCCOMP251P-004
 
 The API supports user and device authentication, readings, district summaries, and installation management. The [endpoint table](#api-endpoints) lists the available routes.
 
+The API is live on Render at [https://slsea-api.onrender.com](https://slsea-api.onrender.com/).
+
+| Endpoint | URL |
+| --- | --- |
+| Health | [https://slsea-api.onrender.com/api/v1.0/health](https://slsea-api.onrender.com/api/v1.0/health) |
+| Swagger UI | [https://slsea-api.onrender.com/api/v1.0/docs](https://slsea-api.onrender.com/api/v1.0/docs) |
+| OpenAPI JSON | [https://slsea-api.onrender.com/api/v1.0/openapi.json](https://slsea-api.onrender.com/api/v1.0/openapi.json) |
+
 ## Getting started
 
-You need Node.js 24 or later and MongoDB Atlas or a local MongoDB replica set.
+To run the project yourself, you need Node.js 24 or later and MongoDB Atlas or a MongoDB replica set.
 
 1. Run `npm ci`.
 2. Copy `.env.example` to `.env`.
@@ -23,7 +31,7 @@ To generate a signing key locally:
 node -e "console.log(require('node:crypto').randomBytes(48).toString('hex'))"
 ```
 
-For local MongoDB, [configure a replica set](https://www.mongodb.com/docs/manual/tutorial/convert-standalone-to-replica-set/) named `rs0` and run `rs.initiate()` once. The example URI is `mongodb://127.0.0.1:27017/solar-generation?replicaSet=rs0`. A standalone MongoDB server cannot run the required transactions.
+A standalone MongoDB server cannot run the required transactions. Use Atlas or [configure a replica set](https://www.mongodb.com/docs/manual/tutorial/convert-standalone-to-replica-set/).
 
 | Setting | Purpose | Default |
 | --- | --- | --- |
@@ -36,7 +44,7 @@ For local MongoDB, [configure a replica set](https://www.mongodb.com/docs/manual
 | `JWT_EXPIRES_IN_SECONDS` | Token lifetime, from 60 to 3600 seconds | `900` |
 | `DEVICE_HASH_COMMON_PREFIX` | Private device-secret prefix for sample data | Required for seeding |
 
-Keep credentials out of source control. Process environment variables override `.env`. The local server uses HTTP; deployment uses HTTPS through a proxy.
+Keep credentials out of source control. Process environment variables override `.env`. The deployed API uses HTTPS.
 
 ## Commands
 
@@ -49,7 +57,7 @@ Keep credentials out of source control. Process environment variables override `
 
 ## API endpoints
 
-The default local base URL is `http://localhost:3000/api/v1.0`. Append the paths below to it.
+The live API base URL is `https://slsea-api.onrender.com/api/v1.0`. Append the paths below to it.
 
 | Method | Path |
 | --- | --- |
@@ -65,7 +73,7 @@ The default local base URL is `http://localhost:3000/api/v1.0`. Append the paths
 | GET | `/installations/{installationId}/readings/{readingId}`, `/readings` |
 | GET | `/districts/{districtId}/generation-summary` |
 
-Open [Swagger UI](http://localhost:3000/api/v1.0/docs) to try requests and view schemas. Adjust the URL if you change the port or prefix.
+Open [Swagger UI](https://slsea-api.onrender.com/api/v1.0/docs) to try requests and view schemas.
 
 Use a user token for protected reads, the installation's device token to submit readings, and an admin token to manage installations. Send tokens as `Authorization: Bearer <access_token>`. See [OpenAPI](docs/openapi.json) for request fields, query parameters, access rules and caching.
 
