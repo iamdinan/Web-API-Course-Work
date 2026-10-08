@@ -190,6 +190,18 @@ Only after ancestry authorization, query GenerationReading with both `{ publicId
 
 `GET /installations/{installationId}/last-reading` reuses authorizedInstallation before querying GenerationReading by the installation public UUID. Use descending recordedAt/publicId with findOne and the existing installation history index. No installation status filter or domain writes occur. Missing installation/ancestry or empty history returns no reading; forbidden ancestry is rejected before querying readings. Serialize through readingBody and share individual-reading response/conditional handling after authorization. The [latest-reading HTTP contract](API_DESIGN_RULES.md#latest-reading) owns statuses, caching and receipt-based Last-Modified.
 
+### Installation list
+
+`GET /installations` reuses the regional geography resolver to obtain authorized substation public IDs after resolving explicit filters, their ancestry and stored user scope. Apply `{ substationId: { $in: authorizedSubstationIds } }` to both SolarInstallation count and paged result queries; no unrestricted installation query occurs, even nationally. Include inactive installations and exclude broken implicit ancestry. Explicit missing or forbidden geography uses the shared filter errors.
+
+Resolve geography, count and page in one read-only snapshot. Project only publicId/substationId/meterId/status, sort by publicId ascending, then offset/limit; serialize through installationBody. Reading history is not queried. The shared listBody utility supplies the standard count/next/previous/items envelope and prefix-aware filter-preserving links, also used by reading lists. Query parameters and collection validators belong to the [HTTP contract](API_DESIGN_RULES.md#installation-list). No installation writes are implemented.
+
+### Installation details
+
+`GET /installations/{installationId}` returns exactly `{ "id": "<UUID>", "substationId": "<UUID>", "meterId": "<meter identifier>", "status": "active" }`; status may also be inactive. Reuse authorizedInstallation and the read-only snapshot pattern to resolve complete ancestry and current installation metadata coherently. No reading query or domain write occurs. Missing installation/ancestry fails closed; jurisdiction rejection precedes public serialization and validators.
+
+The shared installationBody serializer (also used in overview) selects public fields in id/substationId/meterId/status order after the model JSON transform. installationETag hashes JSON.stringify of those canonical fields using SHA-256 and returns a quoted strong hexadecimal tag. It excludes principal identity, geography names, readings, credentials, internal IDs, version and lock metadata. Future admin PATCH/DELETE preconditions must reuse these helpers with the atomic mutation guarantees above; writes remain unimplemented. No reliable metadata modification timestamp is stored. See the [HTTP contract](API_DESIGN_RULES.md#installation-details).
+
 ### Installation overview
 
 `GET /installations/{installationId}/overview` returns this minimal composite (public UUIDs only):

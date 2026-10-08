@@ -8,7 +8,7 @@ class ReadingFilterError extends Error {
   }
 }
 
-async function regionalInstallationIds(user, query, session) {
+async function regionalSubstationIds(user, query, session) {
   async function ancestry(kind, id) {
     const models = { province: Province, district: District, substation: GridSubstation };
     const fields = { province: "publicId", district: "publicId provinceId", substation: "publicId districtId" };
@@ -58,9 +58,14 @@ async function regionalInstallationIds(user, query, session) {
     ...(area.districtId ? { publicId: area.districtId } : {}) }).select("publicId -_id").session(session).lean();
   const substations = await GridSubstation.find({ districtId: { $in: districts.map(value => value.publicId) },
     ...(area.substationId ? { publicId: area.substationId } : {}) }).select("publicId -_id").session(session).lean();
-  const installations = await SolarInstallation.find({ substationId: { $in: substations.map(value => value.publicId) } })
+  return substations.map(value => value.publicId);
+}
+
+async function regionalInstallationIds(user, query, session) {
+  const substationIds = await regionalSubstationIds(user, query, session);
+  const installations = await SolarInstallation.find({ substationId: { $in: substationIds } })
     .select("publicId -_id").session(session).lean();
   return installations.map(value => value.publicId);
 }
 
-module.exports = { regionalInstallationIds, ReadingFilterError };
+module.exports = { regionalInstallationIds, regionalSubstationIds, ReadingFilterError };

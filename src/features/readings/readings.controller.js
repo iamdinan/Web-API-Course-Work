@@ -2,6 +2,7 @@ const readings = require("./readings.service");
 const { apiBaseUrl } = require("../../config/env");
 const { createHash } = require("node:crypto");
 const { sendError } = require("../../utils/http-errors");
+const { installationETag } = require("./readings.serializer");
 
 async function postReading(req, res) {
   try {
@@ -81,4 +82,29 @@ async function getOverview(req, res) {
   return res.set({ "Cache-Control": "private, no-cache", ETag: `"${tag}"` }).json(body);
 }
 
-module.exports = { postReading, getReading, getLastReading, getReadings, getOverview };
+async function getInstallation(req, res) {
+  let body;
+  try {
+    body = await readings.findInstallation(req.user, req.params.installationId);
+  } catch (error) {
+    if (!(error instanceof readings.ReadingAccessError)) throw error;
+    return sendError(res, 403, { code: "FORBIDDEN", message: error.message, details: [] });
+  }
+  if (!body) return sendError(res, 404, { code: "NOT_FOUND", message: "Installation not found.", details: [] });
+  // Authorization precedes validators; no reliable metadata Last-Modified exists.
+  return res.set({ "Cache-Control": "private, no-cache", ETag: installationETag(body) }).json(body);
+}
+
+async function getInstallations(req, res) {
+  let body;
+  try {
+    body = await readings.listInstallations(req.user, req.installationQuery);
+  } catch (error) {
+    if (!(error instanceof readings.ReadingFilterError)) throw error;
+    return sendError(res, error.status, { code: error.code, message: error.message, details: [] });
+  }
+  const tag = createHash("sha256").update(JSON.stringify({ user: req.user, query: req.installationQuery, body })).digest("hex");
+  return res.set({ "Cache-Control": "private, no-cache", ETag: `"${tag}"` }).json(body);
+}
+
+module.exports = { postReading, getReading, getLastReading, getReadings, getOverview, getInstallation, getInstallations };

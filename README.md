@@ -6,7 +6,7 @@ A Node.js/Express API backed by Mongoose and MongoDB Atlas for solar generation 
 
 ## Current implementation
 
-The application currently provides public `/health` and `/openapi.json`, user/admin login at `POST /auth/user-tokens`, device login at `POST /auth/device-tokens`, protected `GET /provinces`, `GET /readings`, `GET /installations/{installationId}/readings`, `GET /installations/{installationId}/readings/{readingId}`, `GET /installations/{installationId}/last-reading`, and `GET /installations/{installationId}/overview`, six data models, the full dataset seed, and controlled user seeding. Login and protected reads use shared MongoDB limits. Installation JWT verification and URL ownership protect `POST /installations/{installationId}/readings`, with transactional active-status checks and shared device-write limits. Remaining resource endpoints, Swagger UI, database readiness, and other traffic limits remain planned. The architecture describes the target API; OpenAPI describes implemented routes only.
+The application currently provides public `/health` and `/openapi.json`, user/admin login at `POST /auth/user-tokens`, device login at `POST /auth/device-tokens`, protected `GET /provinces`, `GET /readings`, `GET /installations/{installationId}/readings`, `GET /installations/{installationId}/readings/{readingId}`, `GET /installations/{installationId}/last-reading`, `GET /installations/{installationId}/overview`, `GET /installations/{installationId}`, and `GET /installations`, six data models, the full dataset seed, and controlled user seeding. Login and protected reads use shared MongoDB limits. Installation JWT verification and URL ownership protect `POST /installations/{installationId}/readings`, with transactional active-status checks and shared device-write limits. Remaining resource endpoints, Swagger UI, database readiness, and other traffic limits remain planned. The architecture describes the target API; OpenAPI describes implemented routes only.
 
 ## Getting started
 
@@ -60,6 +60,8 @@ Append the paths below to your API base URL. Use your deployed HTTPS host with t
 | GET | `/installations/{installationId}/readings/{readingId}` | Retrieve a reading within the authenticated user's jurisdiction |
 | GET | `/installations/{installationId}/last-reading` | Retrieve the latest measurement within the authenticated user's jurisdiction |
 | GET | `/installations/{installationId}/overview` | Retrieve installation details, geography and latest reading within the user's jurisdiction |
+| GET | `/installations/{installationId}` | Retrieve public installation metadata within the user's jurisdiction |
+| GET | `/installations` | Page/filter public installations within the user's jurisdiction |
 
 Health does not query MongoDB. For a manual startup check, confirm the connection message and request the health path.
 
@@ -125,6 +127,14 @@ Send the user/admin bearer token to GET `/installations/{installationId}/reading
 ## Read the latest measurement
 
 Send a user/admin bearer token to GET `/installations/{installationId}/last-reading`. The response is the reading with the greatest recordedAt, including retained inactive history. See the [latest-reading contract](docs/API_DESIGN_RULES.md#latest-reading) for access, empty results and conditional caching.
+
+## List installations
+
+Send a user/admin bearer token to GET `/installations`. Optional provinceId, districtId and substationId filters narrow the authorized area; offset and limit select a page. Both active and inactive installations are included. See the [installation-list contract](docs/API_DESIGN_RULES.md#installation-list) for parameters, collection responses and caching. Installation writes remain unimplemented.
+
+## Read installation details
+
+Send a user/admin bearer token to GET `/installations/{installationId}`. It returns public installation metadata for active or inactive installations within jurisdiction, with a strong installation ETag for conditional GET. See the [installation-detail contract](docs/API_DESIGN_RULES.md#installation-details). Installation writes remain unimplemented.
 
 ## Read an installation overview
 

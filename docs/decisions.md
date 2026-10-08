@@ -130,6 +130,18 @@ This file records choices, their reasons, and unresolved questions. Concrete sch
 - **Reason:** No exact composite fields were previously specified. This structure exposes the existing public domain fields without full history or private metadata, and a snapshot prevents mixed installation/geography/reading states.
 - **Validators:** Cover the authorized principal and complete composite in a strong ETag. Omit Last-Modified because reading receipt time cannot describe installation status or geography changes.
 
+## D24 - Installation detail representation and validator
+
+- **Choice:** Share the four-field installation serializer with overview and hash its canonical public fields into a principal-independent SHA-256 strong ETag. Reuse ancestry authorization in a read snapshot.
+- **Reason:** Future admin preconditions need one representation validator across authorized readers. Changes to history, geography names or private metadata must not invalidate an unchanged installation. Current access checks still precede every conditional response.
+- **Time validator:** Omit Last-Modified because no installation metadata change timestamp is persisted; reading receipt times cannot establish metadata freshness.
+
+## D25 - Scoped installation collection
+
+- **Choice:** Reuse regional geography authorization to restrict installation count/page queries by eligible substations in one snapshot. Accept only the documented geography filters and offset/limit, retain both statuses and use ascending public UUID order.
+- **Reason:** Restricting queries before counting/paging prevents jurisdiction leaks; the same filter policy as regional readings gives explicit missing/forbidden/contradictory responses. No client sort was specified, so fixed UUID ordering makes pagination stable without adding parameters.
+- **Validators:** Hash current principal, effective query and complete list envelope; omit Last-Modified because no reliable whole-collection change timestamp exists.
+
 ## Pending decisions
 
 | Topic | Decision needed |

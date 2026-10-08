@@ -1204,3 +1204,372 @@ test("OpenAPI overview documents the composite, null readings and conditional re
   assert.equal(schema.properties.latestReading.nullable, true);
   assert.equal(schema.additionalProperties, false);
 });
+
+function installationDetails(access, id = installationId, headers = {}) {
+  return rawGet(`/installations/${id}`, access, headers);
+}
+
+integration("installation details share exact public metadata and canonical strong ETags across all authorized readers, active and inactive", async () => {
+  const station = await models.GridSubstation.findOne({});
+  const district = await models.District.findOne({});
+  const { createHash } = require("node:crypto");
+  for (const status of ["active", "inactive"]) {
+    await models.SolarInstallation.updateOne({ publicId: installationId }, { $set: { status } });
+    const expected = { id: installationId, substationId: station.publicId, meterId: "TEST-METER", status };
+    const tag = `"${createHash("sha256").update(JSON.stringify(expected)).digest("hex")}"`;
+    for (const fields of [{}, { role: "admin" }, { readScope: "province", provinceId: district.provinceId },
+      { readScope: "district", districtId: district.publicId }]) {
+      const { access } = await analyst(fields);
+      const result = await installationDetails(access);
+      assert.equal(result.status, 200);
+      assert.deepEqual(result.body, expected);
+      assert.deepEqual(Object.keys(result.body), ["id", "substationId", "meterId", "status"]);
+      assert.equal(result.headers.etag, tag);
+      assert.match(tag, /^"[0-9a-f]{64}"$/);
+      assert.equal(result.headers["cache-control"], "private, no-cache");
+      assert.equal(result.headers["last-modified"], undefined);
+      assert.deepEqual((await overview(access)).body.installation, result.body);
+    }
+  }
+});
+
+integration("installation details authenticate user actors, validate public IDs, and fail closed for missing installations or ancestry", async () => {
+  for (const access of [null, "invalid", token(), token({ actor: "user" }, { expiresIn: -1 })]) {
+    const result = await installationDetails(access, installationId, { "If-None-Match": "*" });
+    assert.equal(result.status, 401);
+    assert.equal(result.headers["www-authenticate"], "Bearer");
+    assert.equal(result.headers["cache-control"], "no-store");
+    assert.equal(result.headers.etag, undefined);
+    assert.equal(result.headers["last-modified"], undefined);
+  }
+  const { access } = await analyst();
+  for (const id of ["invalid", "507f1f77bcf86cd799439011", installationId.replace(/-4/, "-1")]) {
+    const result = await installationDetails(access, id, { "If-None-Match": "*" });
+    assert.equal(result.status, 400);
+    assert.equal(result.body.code, "INVALID_REQUEST");
+    assert.equal(result.headers.etag, undefined);
+  }
+  const missing = await installationDetails(access, randomUUID(), { "If-None-Match": "*" });
+  assert.equal(missing.status, 404);
+  assert.deepEqual(missing.body, { code: "NOT_FOUND", message: "Installation not found.", details: [] });
+  assert.equal(missing.headers.etag, undefined);
+  for (const model of [models.Province, models.District, models.GridSubstation]) {
+    const saved = await model.collection.findOne({});
+    await model.collection.deleteOne({ _id: saved._id });
+    const result = await installationDetails(access, installationId, { "If-None-Match": "*" });
+    assert.equal(result.status, 404);
+    assert.equal(result.headers.etag, undefined);
+    await model.collection.insertOne(saved);
+  }
+});
+
+integration("installation detail jurisdiction rejects foreign provinces and sibling districts before returning data or validators", async () => {
+  const { access: nationalAccess } = await analyst();
+  const tag = (await installationDetails(nationalAccess)).headers.etag;
+  const district = await models.District.findOne({});
+  const foreignProvince = await models.Province.create({ name: "Foreign" });
+  const foreignDistrict = await models.District.create({ name: "Foreign", provinceId: foreignProvince.publicId });
+  const sibling = await models.District.create({ name: "Sibling", provinceId: district.provinceId });
+  for (const fields of [{ readScope: "province", provinceId: foreignProvince.publicId },
+    { readScope: "district", districtId: foreignDistrict.publicId }, { readScope: "district", districtId: sibling.publicId }]) {
+    const { access } = await analyst(fields);
+    const result = await installationDetails(access, installationId, { "If-None-Match": tag });
+    assert.equal(result.status, 403);
+    assert.deepEqual(result.body, { code: "FORBIDDEN", message: "The installation is outside your permitted jurisdiction.", details: [] });
+    assert.equal(result.headers["cache-control"], "no-store");
+    assert.equal(result.headers.etag, undefined);
+    assert.equal(result.headers["last-modified"], undefined);
+  }
+});
+
+integration("installation conditional GET is bodyless and ETags ignore readings/private metadata but track public status", async t => {
+  const { access } = await analyst();
+  const first = await installationDetails(access);
+  const tag = first.headers.etag;
+  const future = new Date("2099-01-01T00:00:00Z").toUTCString();
+  for (const value of [tag, `W/${tag}`, `"other", ${tag}`, "*"]) {
+    const result = await installationDetails(access, installationId, { "If-None-Match": value });
+    assert.equal(result.status, 304);
+    assert.equal(result.text, "");
+    assert.equal(result.headers["content-type"], undefined);
+    assert.equal(result.headers.etag, tag);
+    assert.equal(result.headers["cache-control"], "private, no-cache");
+    assert.equal(result.headers["last-modified"], undefined);
+  }
+  assert.equal((await installationDetails(access, installationId, { "If-Modified-Since": future })).status, 200);
+  assert.equal((await installationDetails(access, installationId, { "If-None-Match": '"other"', "If-Modified-Since": future })).status, 200);
+  await history(2);
+  await models.Province.updateOne({}, { $set: { name: "Renamed" } });
+  // Only isolated fixture metadata changes; no installation-write endpoint is added.
+  await models.SolarInstallation.collection.updateOne({ publicId: installationId },
+    { $set: { deviceCredentialHash: "changed-test-hash", _ingestionLock: randomUUID(), __v: 99 } });
+  t.mock.method(models.GenerationReading, "findOne", () => { throw new Error("Installation details must not query readings"); });
+  const unchanged = await installationDetails(access, installationId, { "If-None-Match": tag });
+  assert.equal(unchanged.status, 304);
+  assert.equal(unchanged.headers.etag, tag);
+  await models.SolarInstallation.updateOne({ publicId: installationId }, { $set: { status: "inactive" } });
+  const changed = await installationDetails(access, installationId, { "If-None-Match": tag });
+  assert.equal(changed.status, 200);
+  assert.equal(changed.body.status, "inactive");
+  assert.notEqual(changed.headers.etag, tag);
+  assert.deepEqual(Object.keys(changed.body), ["id", "substationId", "meterId", "status"]);
+  await models.SolarInstallation.updateOne({ publicId: installationId }, { $set: { status: "inactive" } });
+  assert.equal((await installationDetails(access)).headers.etag, changed.headers.etag);
+});
+
+integration("installation details recheck current user jurisdiction and shared read limits before 304 and sanitize failures", async t => {
+  const { user, access } = await analyst();
+  const tag = (await installationDetails(access)).headers.etag;
+  const foreign = await models.Province.create({ name: "New assignment" });
+  await models.User.updateOne({ publicId: user.publicId }, { $set: { readScope: "province", provinceId: foreign.publicId } });
+  assert.equal((await installationDetails(access, installationId, { "If-None-Match": tag })).status, 403);
+  await models.User.deleteOne({ publicId: user.publicId });
+  assert.equal((await installationDetails(access, installationId, { "If-None-Match": tag })).status, 401);
+  const { user: admin, access: adminAccess } = await analyst({ role: "admin" });
+  const { createHash } = require("node:crypto");
+  await Counter.create({ _id: `user-read:${createHash("sha256").update(admin.publicId).digest("hex")}`,
+    count: 119, expiresAt: new Date(Date.now() + 60000) });
+  assert.equal((await overview(adminAccess)).status, 200);
+  const limited = await installationDetails(adminAccess, installationId, { "If-None-Match": tag });
+  assert.equal(limited.status, 429);
+  assert.ok(Number(limited.headers["retry-after"]) > 0);
+  assert.equal(limited.headers.etag, undefined);
+  const { access: another } = await analyst();
+  t.mock.method(models.SolarInstallation, "findOne", () => { throw new Error("private diagnostics"); });
+  const failed = await installationDetails(another);
+  assert.equal(failed.status, 500);
+  assert.deepEqual(failed.body, { code: "INTERNAL_SERVER_ERROR", message: "An unexpected error occurred.", details: [] });
+  assert.equal(failed.headers["cache-control"], "no-store");
+  assert.equal(failed.headers.etag, undefined);
+});
+
+test("OpenAPI installation details document public metadata, strong validators and GET only", () => {
+  const spec = require("../docs/openapi.json");
+  const resource = spec.paths["/installations/{installationId}"];
+  assert.deepEqual(Object.keys(resource), ["get"]);
+  assert.deepEqual(resource.get.security, [{ UserBearer: [] }]);
+  assert.deepEqual(resource.get.parameters.filter(p => p.in === "path").map(p => p.name), ["installationId"]);
+  for (const status of [200, 304, 400, 401, 403, 404, 406, 429, 500]) assert.ok(resource.get.responses[status]);
+  assert.equal(resource.get.responses[200].content["application/json"].schema.$ref, "#/components/schemas/SolarInstallation");
+  assert.equal(resource.get.responses[304].content, undefined);
+  for (const status of [200, 304]) {
+    assert.equal(resource.get.responses[status].headers["Last-Modified"], undefined);
+    assert.equal(resource.get.responses[status].headers.ETag.$ref, "#/components/headers/InstallationETag");
+  }
+  assert.deepEqual(Object.keys(spec.components.schemas.SolarInstallation.properties), ["id", "substationId", "meterId", "status"]);
+  assert.equal(spec.components.schemas.SolarInstallation.additionalProperties, false);
+});
+
+function installations(access, query = "", headers = {}) {
+  return rawGet("/installations" + query, access, headers);
+}
+async function installationListFixture() {
+  const local = await models.District.findOne({ name: "Test district" });
+  const station = await models.GridSubstation.findOne({ districtId: local.publicId });
+  const sibling = await models.District.create({ name: "Sibling", provinceId: local.provinceId });
+  const foreignProvince = await models.Province.create({ name: "Foreign" });
+  const foreign = await models.District.create({ name: "Foreign", provinceId: foreignProvince.publicId });
+  const stations = [station];
+  for (const district of [sibling, foreign]) stations.push(await models.GridSubstation.create({ name: district.name, districtId: district.publicId }));
+  const records = [await models.SolarInstallation.findOne({ publicId: installationId })];
+  for (const substation of stations) {
+    for (let index = 0; index < 2; index++) records.push(await models.SolarInstallation.create({
+      substationId: substation.publicId, meterId: randomUUID(), deviceCredentialHash: "fixture-hash", status: index ? "inactive" : "active",
+    }));
+  }
+  return { local, sibling, foreign, stations, records };
+}
+
+integration("installation lists isolate national/admin/province/district results and expose only public fields with both statuses", async () => {
+  const f = await installationListFixture();
+  for (const [fields, stations] of [[{}, f.stations], [{ role: "admin" }, f.stations],
+    [{ readScope: "province", provinceId: f.local.provinceId }, f.stations.slice(0, 2)],
+    [{ readScope: "district", districtId: f.local.publicId }, f.stations.slice(0, 1)]]) {
+    const ids = stations.map(s => s.publicId);
+    const expected = f.records.filter(r => ids.includes(r.substationId)).map(r => r.publicId).sort();
+    const { access } = await analyst(fields);
+    const result = await installations(access);
+    assert.equal(result.status, 200);
+    assert.equal(result.body.count, expected.length);
+    assert.deepEqual(result.body.items.map(r => r.id), expected);
+    assert.equal(result.body.next, null);
+    assert.equal(result.body.previous, null);
+    assert.ok(result.body.items.some(r => r.status === "inactive"));
+    for (const item of result.body.items) assert.deepEqual(Object.keys(item), ["id", "substationId", "meterId", "status"]);
+    assert.equal(result.headers["cache-control"], "private, no-cache");
+    assert.equal(result.headers["last-modified"], undefined);
+  }
+  const { access } = await analyst({ readScope: "district", districtId: f.local.publicId });
+  assert.equal((await installations(access, `?provinceId=${f.local.provinceId}`)).body.count, 3);
+});
+
+integration("installation geography filters narrow before count/page and pagination preserves filters and public-ID order", async () => {
+  const f = await installationListFixture();
+  const { access } = await analyst();
+  for (const [query, expected] of [[`?provinceId=${f.local.provinceId}`, 5], [`?districtId=${f.sibling.publicId}`, 2],
+    [`?substationId=${f.stations[2].publicId}`, 2]]) {
+    assert.equal((await installations(access, query)).body.count, expected);
+  }
+  const params = new URLSearchParams({ provinceId: f.local.provinceId, districtId: f.local.publicId,
+    substationId: f.stations[0].publicId, offset: "1", limit: "1" });
+  const result = await installations(access, "?" + params);
+  const expected = f.records.filter(r => r.substationId === f.stations[0].publicId).map(r => r.publicId).sort();
+  assert.equal(result.body.count, 3);
+  assert.deepEqual(result.body.items.map(r => r.id), expected.slice(1, 2));
+  for (const [key, offset] of [["next", "2"], ["previous", "0"]]) {
+    const url = new URL(result.body[key], origin);
+    assert.equal(url.pathname, "/api/v1.0/installations");
+    for (const filter of ["provinceId", "districtId", "substationId", "limit"]) assert.equal(url.searchParams.get(filter), params.get(filter));
+    assert.equal(url.searchParams.get("offset"), offset);
+  }
+  const beyond = await installations(access, "?offset=99&limit=1");
+  assert.equal(beyond.body.count, 7);
+  assert.deepEqual(beyond.body.items, []);
+  assert.equal(beyond.body.next, null);
+  // Check documented defaults and bounds with more than one default page.
+  await models.SolarInstallation.create(Array.from({ length: 51 }, () => ({ substationId: f.stations[0].publicId,
+    meterId: randomUUID(), deviceCredentialHash: "fixture-hash" })));
+  const defaultPage = await installations(access);
+  assert.equal(defaultPage.body.count, 58);
+  assert.equal(defaultPage.body.items.length, 50);
+  assert.equal(new URL(defaultPage.body.next, origin).searchParams.get("offset"), "50");
+  assert.equal((await installations(access, "?limit=200")).body.items.length, 58);
+});
+
+integration("installation lists reject actors and invalid/missing/forbidden/contradictory filters before installation queries", async t => {
+  const f = await installationListFixture();
+  t.mock.method(models.SolarInstallation, "find", () => { throw new Error("Unexpected installation query"); });
+  t.mock.method(models.SolarInstallation, "countDocuments", () => { throw new Error("Unexpected installation count"); });
+  for (const access of [null, "invalid", token()]) {
+    const result = await installations(access, "", { "If-None-Match": "*" });
+    assert.equal(result.status, 401);
+    assert.equal(result.headers["www-authenticate"], "Bearer");
+    assert.equal(result.headers.etag, undefined);
+  }
+  const { access } = await analyst();
+  const cases = [];
+  for (const query of ["?offset=-1", "?offset=1.5", "?offset=", "?offset=9007199254740991&limit=1", "?limit=0", "?limit=201",
+    "?limit=1&limit=2", "?provinceId=x", "?districtId=bad", "?substationId=bad", "?status=active", "?sort=timestamp", "?from=2026-10-08", "?to=bad", "?extra=x"])
+    cases.push([access, query, 400]);
+  for (const key of ["provinceId", "districtId", "substationId"]) cases.push([access, `?${key}=${randomUUID()}`, 404]);
+  cases.push([access, `?provinceId=${f.local.provinceId}&districtId=${f.foreign.publicId}`, 400]);
+  cases.push([access, `?districtId=${f.local.publicId}&substationId=${f.stations[1].publicId}`, 400]);
+  const { access: provincial } = await analyst({ readScope: "province", provinceId: f.local.provinceId });
+  const { access: district } = await analyst({ readScope: "district", districtId: f.local.publicId });
+  cases.push([provincial, `?provinceId=${f.foreign.provinceId}`, 403], [provincial, `?substationId=${f.stations[2].publicId}`, 403],
+    [district, `?districtId=${f.sibling.publicId}`, 403], [district, `?substationId=${f.stations[1].publicId}`, 403],
+    [provincial, `?provinceId=${f.local.provinceId}&districtId=${f.foreign.publicId}`, 403]);
+  for (const [auth, query, status] of cases) {
+    const result = await installations(auth, query, { "If-None-Match": "*" });
+    assert.equal(result.status, status, query);
+    assert.equal(result.headers["cache-control"], "no-store");
+    assert.equal(result.headers.etag, undefined);
+    assert.equal(result.headers["last-modified"], undefined);
+    assert.equal(result.body.items, undefined);
+    assert.equal(result.body.count, undefined);
+  }
+});
+
+integration("installation list returns authorized empty collections and fails closed for broken implicit ancestry", async () => {
+  const { access } = await analyst();
+  const district = await models.District.findOne({});
+  const empty = await models.GridSubstation.create({ name: "Empty", districtId: district.publicId });
+  assert.deepEqual((await installations(access, `?substationId=${empty.publicId}`)).body,
+    { count: 0, next: null, previous: null, items: [] });
+  const { access: regionalAccess } = await analyst({ readScope: "district", districtId: district.publicId });
+  await models.Province.collection.deleteMany({});
+  for (const auth of [access, regionalAccess]) {
+    const result = await installations(auth);
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.body, { count: 0, next: null, previous: null, items: [] });
+  }
+  assert.equal((await installations(access, `?districtId=${district.publicId}`)).status, 404);
+});
+
+integration("installation list ETags cover context, query and complete envelope with authorization before 304", async () => {
+  const f = await installationListFixture();
+  const { user, access } = await analyst();
+  const query = "?limit=1";
+  const first = await installations(access, query);
+  const tag = first.headers.etag;
+  for (const value of [tag, `W/${tag}`, `"other", ${tag}`, "*"]) {
+    const cached = await installations(access, query, { "If-None-Match": value });
+    assert.equal(cached.status, 304);
+    assert.equal(cached.text, "");
+    assert.equal(cached.headers["content-type"], undefined);
+    assert.equal(cached.headers.etag, tag);
+    assert.equal(cached.headers["cache-control"], "private, no-cache");
+  }
+  assert.equal((await installations(access, query, { "If-Modified-Since": new Date("2099-01-01").toUTCString() })).status, 200);
+  assert.notEqual((await installations(access, "?limit=2")).headers.etag, tag);
+  const { access: other } = await analyst();
+  assert.notEqual((await installations(other, query)).headers.etag, tag);
+  await models.SolarInstallation.create({ substationId: f.stations[0].publicId, meterId: randomUUID(), deviceCredentialHash: "fixture-hash" });
+  const changed = await installations(access, query, { "If-None-Match": tag });
+  assert.equal(changed.status, 200);
+  assert.equal(changed.body.count, 8);
+  assert.notEqual(changed.headers.etag, tag);
+  await models.User.updateOne({ publicId: user.publicId }, { $set: { readScope: "district", districtId: f.local.publicId } });
+  const rescoped = await installations(access, query, { "If-None-Match": changed.headers.etag });
+  assert.equal(rescoped.status, 200);
+  assert.equal(rescoped.body.count, 4);
+  assert.equal((await installations(access, `?districtId=${f.foreign.publicId}`, { "If-None-Match": "*" })).status, 403);
+  await models.User.deleteOne({ publicId: user.publicId });
+  assert.equal((await installations(access, "", { "If-None-Match": "*" })).status, 401);
+});
+
+integration("installation count/page use scoped filters and one snapshot, share read limits and sanitize failures", async t => {
+  const f = await installationListFixture();
+  const { user, access } = await analyst({ readScope: "district", districtId: f.local.publicId });
+  const original = models.SolarInstallation.countDocuments;
+  let inserted = false;
+  const mock = t.mock.method(models.SolarInstallation, "countDocuments", function (filter) {
+    assert.deepEqual(filter, { substationId: { $in: [f.stations[0].publicId] } });
+    const query = original.call(this, filter);
+    const execute = query.exec;
+    query.exec = async function (...args) {
+      const count = await execute.apply(this, args);
+      if (!inserted) {
+        inserted = true;
+        await models.SolarInstallation.collection.insertOne({ publicId: randomUUID(), substationId: f.stations[0].publicId,
+          meterId: randomUUID(), status: "active", deviceCredentialHash: "fixture-hash" });
+      }
+      return count;
+    };
+    return query;
+  });
+  const result = await installations(access);
+  assert.equal(result.status, 200);
+  assert.equal(result.body.count, 3);
+  assert.equal(result.body.items.length, 3);
+  mock.mock.restore();
+  assert.equal((await installations(access)).body.count, 4);
+  const { createHash } = require("node:crypto");
+  await Counter.updateOne({ _id: `user-read:${createHash("sha256").update(user.publicId).digest("hex")}` },
+    { $set: { count: 119, expiresAt: new Date(Date.now() + 60000) } });
+  assert.equal((await installationDetails(access)).status, 200);
+  const limited = await installations(access, "", { "If-None-Match": result.headers.etag });
+  assert.equal(limited.status, 429);
+  assert.ok(Number(limited.headers["retry-after"]) > 0);
+  assert.equal(limited.headers.etag, undefined);
+  const { access: another } = await analyst();
+  t.mock.method(models.SolarInstallation, "find", () => { throw new Error("private diagnostics"); });
+  const failed = await installations(another);
+  assert.equal(failed.status, 500);
+  assert.equal(failed.body.code, "INTERNAL_SERVER_ERROR");
+  assert.equal(failed.headers.etag, undefined);
+});
+
+test("OpenAPI installation collection exposes documented filters, envelope and GET only", () => {
+  const spec = require("../docs/openapi.json");
+  const resource = spec.paths['/installations'];
+  assert.deepEqual(Object.keys(resource), ["get"]);
+  assert.deepEqual(resource.get.security, [{ UserBearer: [] }]);
+  assert.deepEqual(resource.get.parameters.filter(p => p.in === "query").map(p => p.name),
+    ["provinceId", "districtId", "substationId", "offset", "limit"]);
+  for (const status of [200, 304, 400, 401, 403, 404, 406, 429, 500]) assert.ok(resource.get.responses[status]);
+  assert.equal(resource.get.responses[304].content, undefined);
+  assert.equal(resource.get.responses[200].headers['Last-Modified'], undefined);
+  assert.equal(resource.get.responses[200].content['application/json'].schema.$ref, '#/components/schemas/InstallationList');
+  assert.equal(spec.components.schemas.InstallationList.properties.items.items.$ref, '#/components/schemas/SolarInstallation');
+});

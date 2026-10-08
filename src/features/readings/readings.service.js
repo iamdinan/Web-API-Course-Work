@@ -2,10 +2,10 @@ const mongoose = require("mongoose");
 const { randomUUID } = require("node:crypto");
 const { SolarInstallation, GenerationReading, GridSubstation, District, Province } = require("../../models");
 const { publicUuid } = require("../../services/user-principal");
-const { apiBaseUrl } = require("../../config/env");
+const { listBody } = require("../../utils/list-response");
 const readingFields = "publicId installationId recordedAt powerKw energyKwh voltageV receivedAt -_id";
-const { readingBody, overviewBody } = require("./readings.serializer");
-const { regionalInstallationIds, ReadingFilterError } = require("./reading-geography");
+const { readingBody, installationBody, overviewBody } = require("./readings.serializer");
+const { regionalInstallationIds, regionalSubstationIds, ReadingFilterError } = require("./reading-geography");
 
 async function authorizedInstallation(user, installationId, session = null) {
   const installation = await SolarInstallation.findOne({ publicId: installationId }).select("publicId substationId meterId status -_id").session(session);
@@ -52,6 +52,26 @@ async function findOverview(user, installationId) {
   }, { readConcern: { level: "snapshot" } });
 }
 
+async function findInstallation(user, installationId) {
+  return mongoose.connection.transaction(async session => {
+    const ancestry = await authorizedInstallation(user, installationId, session);
+    return ancestry ? installationBody(ancestry.installation) : null;
+  }, { readConcern: { level: "snapshot" } });
+}
+
+async function listInstallations(user, query) {
+  return mongoose.connection.transaction(async session => {
+    const substationIds = await regionalSubstationIds(user, query, session);
+    const filter = { substationId: { $in: substationIds } };
+    const count = await SolarInstallation.countDocuments(filter).session(session);
+    const records = await SolarInstallation.find(filter)
+      .select("publicId substationId meterId status -_id").session(session)
+      .sort({ publicId: 1 }).skip(query.offset).limit(query.limit);
+    return listBody(count, records.map(installationBody), query, "/installations",
+      ["provinceId", "districtId", "substationId"]);
+  }, { readConcern: { level: "snapshot" } });
+}
+
 async function listReadings(user, installationId, query) {
   // A single read snapshot keeps the authorized ancestry, count and page coherent
   // when an ingestion commits between the count and page queries.
@@ -78,20 +98,8 @@ async function readingPage(filter, query, resource, session) {
   const direction = query.sort === "timestamp" ? 1 : -1;
   const records = await GenerationReading.find(filter).select(readingFields).session(session)
     .sort({ recordedAt: direction, publicId: direction }).skip(query.offset).limit(query.limit);
-  function link(offset) {
-    const params = new URLSearchParams();
-    for (const key of ["provinceId", "districtId", "substationId", "from", "to"]) if (query[key]) params.set(key, query[key]);
-    params.set("sort", query.sort);
-    params.set("offset", String(offset));
-    params.set("limit", String(query.limit));
-    return `${apiBaseUrl}${resource}?${params}`;
-  }
-  return {
-    count,
-    next: query.offset + query.limit < count ? link(query.offset + query.limit) : null,
-    previous: query.offset > 0 && count > 0 ? link(Math.max(0, query.offset - query.limit)) : null,
-    items: records.map(readingBody),
-  };
+  return listBody(count, records.map(readingBody), query, resource,
+    ["provinceId", "districtId", "substationId", "from", "to", "sort"]);
 }
 
 class ReadingAccessError extends Error {
@@ -139,4 +147,4 @@ async function createReading(installationId, input) {
   }
 }
 
-module.exports = { createReading, findReading, findLastReading, findOverview, listReadings, listRegionalReadings, ReadingFilterError, ReadingWriteError, ReadingAccessError };
+module.exports = { createReading, findReading, findLastReading, findOverview, findInstallation, listInstallations, listReadings, listRegionalReadings, ReadingFilterError, ReadingWriteError, ReadingAccessError };
