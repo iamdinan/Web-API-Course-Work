@@ -40,8 +40,13 @@ async function getReading(req, res) {
 async function getReadings(req, res) {
   let body;
   try {
-    body = await readings.listReadings(req.user, req.params.installationId, req.readingQuery);
+    body = req.params.installationId
+      ? await readings.listReadings(req.user, req.params.installationId, req.readingQuery)
+      : await readings.listRegionalReadings(req.user, req.readingQuery);
   } catch (error) {
+    if (error instanceof readings.ReadingFilterError) {
+      return sendError(res, error.status, { code: error.code, message: error.message, details: [] });
+    }
     if (!(error instanceof readings.ReadingAccessError)) throw error;
     return sendError(res, 403, { code: "FORBIDDEN", message: error.message, details: [] });
   }

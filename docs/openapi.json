@@ -1090,6 +1090,241 @@
           }
         }
       }
+    },
+    "/readings": {
+      "get": {
+        "operationId": "listRegionalReadings",
+        "summary": "Page and filter reading history within stored jurisdiction",
+        "description": "Current user authentication and shared 120/minute read limit precede scoped reading queries and conditional responses. National analysts/admins read nationally; provincial/district analysts see only their stored area. Include inactive installations. Resolve explicit geography and ancestry: missing resources return 404, outside-jurisdiction filters 403, and contradictory authorized filters 400. Selecting a district analyst's parent province never broadens district scope. Count/page and authorized geography share a snapshot. Reuse recordedAt/publicId sort and public reading fields. Links preserve all filters. ETag covers current principal, effective query and complete response; matching If-None-Match returns bodyless 304 after authorization. Omit unreliable Last-Modified; If-Modified-Since alone returns 200. Errors expose no data/counts or validators.",
+        "security": [
+          {
+            "UserBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "provinceId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "description": "Single public UUID v4. Must exist within current jurisdiction and agree with other geography filters."
+          },
+          {
+            "name": "districtId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "description": "Single public UUID v4. Must exist within current jurisdiction and agree with other geography filters."
+          },
+          {
+            "name": "substationId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "description": "Single public UUID v4. Must exist within current jurisdiction and agree with other geography filters."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "description": "Nonnegative safe integer; offset plus limit must remain a safe integer."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?(?:Z|[+-]\\d{2}:\\d{2})$"
+            },
+            "description": "Inclusive valid calendar ISO timestamp with explicit zone and millisecond precision. Must be before to when both are present."
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?(?:Z|[+-]\\d{2}:\\d{2})$"
+            },
+            "description": "Exclusive valid calendar ISO timestamp with explicit zone and millisecond precision. Percent-encode + as %2B in URLs."
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "timestamp",
+                "-timestamp"
+              ],
+              "default": "-timestamp"
+            },
+            "description": "recordedAt and publicId ascending or descending."
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Matching strong/weak tag, tag in a list, or * returns bodyless 304 only after authorization and read limiting."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized matching readings; an empty result uses count=0, null links and empty items.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "ETag": {
+                "$ref": "#/components/headers/ScopedETag"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadingList"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Complete authorized response unchanged; no body or Content-Type.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/PrivateCacheControl"
+              },
+              "ETag": {
+                "$ref": "#/components/headers/ScopedETag"
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed/repeated/unsupported query, invalid paging/time/sort/public UUID, or contradictory authorized geography (INVALID_QUERY).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing/invalid/expired token, installation token, or deleted/invalid user (UNAUTHORIZED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "WWW-Authenticate": {
+                "$ref": "#/components/headers/BearerChallenge"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "An explicit geography filter is outside stored jurisdiction (FORBIDDEN).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Explicit geography or its ancestry missing (NOT_FOUND).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "406": {
+            "$ref": "#/components/responses/NotAcceptable"
+          },
+          "429": {
+            "description": "Shared user-read limit exceeded (RATE_LIMIT_EXCEEDED).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/LoginRetryAfter"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected persistence failure (INTERNAL_SERVER_ERROR).",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {

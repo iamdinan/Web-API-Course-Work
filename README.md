@@ -6,7 +6,7 @@ A Node.js/Express API backed by Mongoose and MongoDB Atlas for solar generation 
 
 ## Current implementation
 
-The application currently provides public `/health` and `/openapi.json`, user/admin login at `POST /auth/user-tokens`, device login at `POST /auth/device-tokens`, protected `GET /provinces`, `GET /installations/{installationId}/readings`, and `GET /installations/{installationId}/readings/{readingId}`, six data models, the full dataset seed, and controlled user seeding. Login and protected reads use shared MongoDB limits. Installation JWT verification and URL ownership protect `POST /installations/{installationId}/readings`, with transactional active-status checks and shared device-write limits. Remaining resource endpoints, Swagger UI, database readiness, and other traffic limits remain planned. The architecture describes the target API; OpenAPI describes implemented routes only.
+The application currently provides public `/health` and `/openapi.json`, user/admin login at `POST /auth/user-tokens`, device login at `POST /auth/device-tokens`, protected `GET /provinces`, `GET /readings`, `GET /installations/{installationId}/readings`, and `GET /installations/{installationId}/readings/{readingId}`, six data models, the full dataset seed, and controlled user seeding. Login and protected reads use shared MongoDB limits. Installation JWT verification and URL ownership protect `POST /installations/{installationId}/readings`, with transactional active-status checks and shared device-write limits. Remaining resource endpoints, Swagger UI, database readiness, and other traffic limits remain planned. The architecture describes the target API; OpenAPI describes implemented routes only.
 
 ## Getting started
 
@@ -56,6 +56,7 @@ Append the paths below to your API base URL. Use your deployed HTTPS host with t
 | GET | `/provinces` | List provinces visible to the authenticated user |
 | POST | `/installations/{installationId}/readings` | Submit a reading for the authenticated active installation |
 | GET | `/installations/{installationId}/readings` | Page/filter reading history within the authenticated user's jurisdiction |
+| GET | `/readings` | Page/filter regional reading history within the authenticated user's jurisdiction |
 | GET | `/installations/{installationId}/readings/{readingId}` | Retrieve a reading within the authenticated user's jurisdiction |
 
 Health does not query MongoDB. For a manual startup check, confirm the connection message and request the health path.
@@ -122,6 +123,8 @@ Send the user/admin bearer token to GET `/installations/{installationId}/reading
 ## Read installation history
 
 Send a user/admin bearer token to GET `/installations/{installationId}/readings`. Optional offset, limit, from/to and sort parameters select the page and time window; results default to newest first. See the [history contract](docs/API_DESIGN_RULES.md#installation-reading-history) for validation, pagination and caching.
+
+For regional history, send a user/admin bearer token to GET `/readings`. Optional provinceId, districtId and substationId filters narrow the authorized area; paging, time filters and sorting follow the [regional history contract](docs/API_DESIGN_RULES.md#regional-reading-history).
 
 ## Project layout
 

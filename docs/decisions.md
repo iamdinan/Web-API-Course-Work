@@ -114,6 +114,11 @@ This file records choices, their reasons, and unresolved questions. Concrete sch
 - **Choice:** Group routes, controllers, validation, and feature services under `src/features`, while retaining shared models, configuration, authentication helpers, middleware, and utilities outside the features. The central router composes the implemented features.
 - **Reason:** Related endpoint code becomes easier to navigate without merging separate responsibilities. Shared security and persistence helpers retain one implementation; timestamp parsing is independent of POST middleware, and reading serialization has a dedicated owner.
 
+## D21 - Scoped regional reading history
+
+- **Choice:** Resolve authorized installation IDs through complete geography within the same snapshot as count/page; reuse installation-history validation, serialization and pagination. Explicit missing geography returns 404, outside-scope filters return 403, and contradictory authorized filters return 400.
+- **Reason:** Restricting reading queries before counting or paging prevents cross-jurisdiction disclosure. A broad parent filter intersects a district analyst's scope instead of expanding it. Separate filter resolution preserves the existing province-list policy while regional lists provide explicit errors.
+
 ## Pending decisions
 
 | Topic | Decision needed |

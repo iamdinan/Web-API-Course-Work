@@ -6,11 +6,12 @@ const { deviceWriteLimit, userReadLimit } = require("../../middleware/rate-limit
 const { postReading, getReading, getReadings } = require("./readings.controller");
 const { verifyUserJwt } = require("../../middleware/verify-user-jwt");
 const { validateReadingPath, validateInstallationPath } = require("./reading-path");
-const { validateReadingQuery } = require("./reading-query");
+const { validateReadingQuery, validateRegionalReadingQuery } = require("./reading-query");
 
-router.post("/:installationId/readings", verifyInstallationJwt, requireInstallationOwnership, readingRequest, deviceWriteLimit, postReading);
-router.get("/:installationId/readings", verifyUserJwt, userReadLimit, validateInstallationPath, validateReadingQuery, getReadings);
-router.get("/:installationId/readings/:readingId", (req, res, next) => {
+router.get("/readings", verifyUserJwt, userReadLimit, validateRegionalReadingQuery, getReadings);
+router.post("/installations/:installationId/readings", verifyInstallationJwt, requireInstallationOwnership, readingRequest, deviceWriteLimit, postReading);
+router.get("/installations/:installationId/readings", verifyUserJwt, userReadLimit, validateInstallationPath, validateReadingQuery, getReadings);
+router.get("/installations/:installationId/readings/:readingId", (req, res, next) => {
   res.set("Cache-Control", "no-store");
   next();
 }, verifyUserJwt, userReadLimit, validateReadingPath, getReading);

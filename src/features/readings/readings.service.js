@@ -5,6 +5,7 @@ const { publicUuid } = require("../../services/user-principal");
 const { apiBaseUrl } = require("../../config/env");
 const readingFields = "publicId installationId recordedAt powerKw energyKwh voltageV receivedAt -_id";
 const { readingBody } = require("./readings.serializer");
+const { regionalInstallationIds, ReadingFilterError } = require("./reading-geography");
 
 async function authorizedInstallation(user, installationId, session = null) {
   const installation = await SolarInstallation.findOne({ publicId: installationId }).select("substationId -_id").session(session).lean();
@@ -36,31 +37,41 @@ async function listReadings(user, installationId, query) {
   // when an ingestion commits between the count and page queries.
   return mongoose.connection.transaction(async session => {
     if (!await authorizedInstallation(user, installationId, session)) return null;
-    const filter = { installationId };
-    if (query.from || query.to) {
-      filter.recordedAt = {};
-      if (query.from) filter.recordedAt.$gte = new Date(query.from);
-      if (query.to) filter.recordedAt.$lt = new Date(query.to);
-    }
-    const count = await GenerationReading.countDocuments(filter).session(session);
-    const direction = query.sort === "timestamp" ? 1 : -1;
-    const records = await GenerationReading.find(filter).select(readingFields).session(session)
-      .sort({ recordedAt: direction, publicId: direction }).skip(query.offset).limit(query.limit);
-    function link(offset) {
-      const params = new URLSearchParams();
-      for (const key of ["from", "to"]) if (query[key]) params.set(key, query[key]);
-      params.set("sort", query.sort);
-      params.set("offset", String(offset));
-      params.set("limit", String(query.limit));
-      return `${apiBaseUrl}/installations/${installationId}/readings?${params}`;
-    }
-    return {
-      count,
-      next: query.offset + query.limit < count ? link(query.offset + query.limit) : null,
-      previous: query.offset > 0 && count > 0 ? link(Math.max(0, query.offset - query.limit)) : null,
-      items: records.map(readingBody),
-    };
+    return readingPage({ installationId }, query, `/installations/${installationId}/readings`, session);
   }, { readConcern: { level: "snapshot" } });
+}
+
+async function listRegionalReadings(user, query) {
+  return mongoose.connection.transaction(async session => {
+    const installationIds = await regionalInstallationIds(user, query, session);
+    return readingPage({ installationId: { $in: installationIds } }, query, "/readings", session);
+  }, { readConcern: { level: "snapshot" } });
+}
+
+async function readingPage(filter, query, resource, session) {
+  if (query.from || query.to) {
+    filter.recordedAt = {};
+    if (query.from) filter.recordedAt.$gte = new Date(query.from);
+    if (query.to) filter.recordedAt.$lt = new Date(query.to);
+  }
+  const count = await GenerationReading.countDocuments(filter).session(session);
+  const direction = query.sort === "timestamp" ? 1 : -1;
+  const records = await GenerationReading.find(filter).select(readingFields).session(session)
+    .sort({ recordedAt: direction, publicId: direction }).skip(query.offset).limit(query.limit);
+  function link(offset) {
+    const params = new URLSearchParams();
+    for (const key of ["provinceId", "districtId", "substationId", "from", "to"]) if (query[key]) params.set(key, query[key]);
+    params.set("sort", query.sort);
+    params.set("offset", String(offset));
+    params.set("limit", String(query.limit));
+    return `${apiBaseUrl}${resource}?${params}`;
+  }
+  return {
+    count,
+    next: query.offset + query.limit < count ? link(query.offset + query.limit) : null,
+    previous: query.offset > 0 && count > 0 ? link(Math.max(0, query.offset - query.limit)) : null,
+    items: records.map(readingBody),
+  };
 }
 
 class ReadingAccessError extends Error {
@@ -108,4 +119,4 @@ async function createReading(installationId, input) {
   }
 }
 
-module.exports = { createReading, findReading, listReadings, ReadingWriteError, ReadingAccessError };
+module.exports = { createReading, findReading, listReadings, listRegionalReadings, ReadingFilterError, ReadingWriteError, ReadingAccessError };

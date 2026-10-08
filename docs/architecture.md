@@ -192,6 +192,12 @@ The collection and individual GETs reuse installation ancestry authorization and
 
 Counts and validators are constructed only after authorization. The whole envelope plus current principal, installation identity and effective query forms the scoped ETag input, following the protected province-list convention. No reliable collection modification time is persisted. See the [HTTP contract](API_DESIGN_RULES.md#installation-reading-history) for query rules, pagination, errors and caching.
 
+### Regional reading history
+
+`GET /readings` shares query validation, pagination, serialization and response validators with installation history. Within the same read-only snapshot, resolve each explicit geography filter and its ancestors, enforce current stored jurisdiction, then reject contradictory authorized filter relationships. Resolve eligible provinces, districts, substations and installation public IDs with credential-free projections and database restrictions. Bind both reading count and page to those installation IDs and the time window; no unscoped reading query is used, including for national reads. Retain inactive installations. Missing implicit ancestry produces an empty eligible area; explicit missing ancestry uses the HTTP error contract.
+
+The regional resolver is separate from the province-list service because explicit inaccessible/missing geography filters have different response policies. See the [regional HTTP contract](API_DESIGN_RULES.md#regional-reading-history) for parameters, precedence, paging and caching.
+
 ## Rate limits
 
 Use shared counters with atomic updates and expiry across deployed instances. The HTTP contract defines rate-limit responses.

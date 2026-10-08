@@ -225,6 +225,14 @@ integration("OpenAPI documents only implemented reading operations with public s
   assert.deepEqual(path.get.parameters.filter(parameter => parameter.in === "query").map(parameter => parameter.name), ["offset", "limit", "from", "to", "sort"]);
   assert.equal(path.get.responses[200].headers["Last-Modified"], undefined);
   assert.equal(path.get.responses[304].content, undefined);
+  const regional = spec.paths["/readings"];
+  assert.deepEqual(Object.keys(regional), ["get"]);
+  assert.deepEqual(regional.get.security, [{ UserBearer: [] }]);
+  assert.deepEqual(regional.get.parameters.filter(parameter => parameter.in === "query").map(parameter => parameter.name),
+    ["provinceId", "districtId", "substationId", "offset", "limit", "from", "to", "sort"]);
+  for (const status of [200, 304, 400, 401, 403, 404, 406, 429, 500]) assert.ok(regional.get.responses[status]);
+  assert.equal(regional.get.responses[304].content, undefined);
+  assert.equal(regional.get.responses[200].headers["Last-Modified"], undefined);
 });
 integration("concurrent duplicate submissions commit exactly one reading", async () => {
   const responses = await Promise.all([post(), post()]);
@@ -683,4 +691,182 @@ integration("reading list persistence errors remain sanitized without validators
   assert.deepEqual(response.body, { code: "INTERNAL_SERVER_ERROR", message: "An unexpected error occurred.", details: [] });
   assert.equal(response.headers.etag, undefined);
   assert.equal(response.headers["last-modified"], undefined);
+});
+
+function regional(access, query = "", headers = {}) {
+  return rawGet("/readings" + query, access, headers);
+}
+async function regionalFixture() {
+  const local = await models.District.findOne({ name: "Test district" });
+  const station = await models.GridSubstation.findOne({ districtId: local.publicId });
+  const sibling = await models.District.create({ name: "Sibling", provinceId: local.provinceId });
+  const foreignProvince = await models.Province.create({ name: "Foreign" });
+  const foreign = await models.District.create({ name: "Foreign", provinceId: foreignProvince.publicId });
+  const ids = [installationId];
+  const stations = [station];
+  for (const district of [sibling, foreign]) {
+    const substation = await models.GridSubstation.create({ name: district.name, districtId: district.publicId });
+    stations.push(substation);
+    const installation = await models.SolarInstallation.create({ substationId: substation.publicId,
+      meterId: randomUUID(), deviceCredentialHash: "fixture-hash", status: "inactive" });
+    ids.push(installation.publicId);
+  }
+  const records = [];
+  for (const id of ids) {
+    for (let i = 0; i < 3; i++) records.push(await models.GenerationReading.create({ installationId: id,
+      recordedAt: new Date(Date.UTC(2026, 9, 8, 0, i)), powerKw: i, energyKwh: i, voltageV: 230 }));
+  }
+  return { local, sibling, foreign, stations, ids, records };
+}
+
+integration("regional readings scope national, admin, province and district counts and retain inactive history", async () => {
+  const f = await regionalFixture();
+  for (const [fields, ids] of [[{}, f.ids], [{ role: "admin" }, f.ids],
+    [{ readScope: "province", provinceId: f.local.provinceId }, f.ids.slice(0, 2)],
+    [{ readScope: "district", districtId: f.local.publicId }, f.ids.slice(0, 1)]]) {
+    const { access } = await analyst(fields);
+    const result = await regional(access);
+    assert.equal(result.status, 200);
+    assert.equal(result.body.count, ids.length * 3);
+    assert.deepEqual([...new Set(result.body.items.map(item => item.installationId))].sort(), ids.slice().sort());
+    const expected = f.records.filter(r => ids.includes(r.installationId)).sort((a, b) =>
+      b.recordedAt - a.recordedAt || (a.publicId < b.publicId ? 1 : -1));
+    assert.deepEqual(result.body.items.map(item => item.id), expected.map(r => r.publicId));
+    assert.equal(result.headers["cache-control"], "private, no-cache");
+    assert.equal(result.headers["last-modified"], undefined);
+    assert.deepEqual(Object.keys(result.body.items[0]).sort(), ["id", "installationId", "recordedAt", "receivedAt",
+      "recordedAtDisplay", "receivedAtDisplay", "powerKw", "energyKwh", "voltageV"].sort());
+  }
+  const { access } = await analyst({ readScope: "district", districtId: f.local.publicId });
+  assert.equal((await regional(access, "?provinceId=" + f.local.provinceId)).body.count, 3);
+  assert.equal((await regional(access, "?from=2099-01-01T00:00:00Z")).body.count, 0);
+  assert.equal(await count(), 9);
+});
+
+integration("regional filters, exclusive time bounds, deterministic ties and pagination links are shared", async () => {
+  const f = await regionalFixture();
+  const { access } = await analyst();
+  for (const [key, id, expected] of [["provinceId", f.local.provinceId, 6], ["districtId", f.sibling.publicId, 3],
+    ["substationId", f.stations[2].publicId, 3]]) {
+    assert.equal((await regional(access, "?" + key + "=" + id)).body.count, expected);
+  }
+  const query = new URLSearchParams({ provinceId: f.local.provinceId, districtId: f.local.publicId,
+    substationId: f.stations[0].publicId, from: "2026-10-08T05:30:00+05:30", to: "2026-10-08T05:32:00+05:30",
+    sort: "timestamp", limit: "1", offset: "1" });
+  const result = await regional(access, "?" + query);
+  assert.equal(result.body.count, 2);
+  assert.equal(result.body.items[0].recordedAt, "2026-10-08T05:31:00.000+05:30");
+  const previous = new URL(result.body.previous, origin);
+  assert.equal(previous.pathname, "/api/v1.0/readings");
+  for (const [key, value] of query) assert.equal(previous.searchParams.get(key), key === "offset" ? "0" : value);
+  const first = await regional(access, "?limit=2&sort=timestamp");
+  const tied = f.records.filter(r => r.recordedAt.getUTCMinutes() === 0).map(r => r.publicId).sort();
+  assert.deepEqual(first.body.items.map(item => item.id), tied.slice(0, 2));
+  assert.equal(first.body.count, 9);
+  const next = new URL(first.body.next, origin);
+  assert.equal(next.searchParams.get("offset"), "2");
+  assert.equal(next.searchParams.get("sort"), "timestamp");
+  assert.equal((await regional(access, "?offset=99")).body.items.length, 0);
+});
+
+integration("regional filter errors authorize before history queries and never expose data or validators", async t => {
+  const f = await regionalFixture();
+  t.mock.method(models.GenerationReading, "find", () => { throw new Error("Denied request queried readings"); });
+  t.mock.method(models.GenerationReading, "countDocuments", () => { throw new Error("Denied request counted readings"); });
+  const { access } = await analyst();
+  const { access: provincial } = await analyst({ readScope: "province", provinceId: f.local.provinceId });
+  const { access: district } = await analyst({ readScope: "district", districtId: f.local.publicId });
+  const requests = [[null, "", 401], ["bad-token", "", 401], [token(), "", 401],
+    [token({ actor: "user" }, { expiresIn: -1 }), "", 401],
+    [provincial, "?provinceId=" + f.foreign.provinceId, 403],
+    [provincial, "?districtId=" + f.foreign.publicId, 403],
+    [district, "?districtId=" + f.sibling.publicId, 403],
+    [district, "?substationId=" + f.stations[1].publicId, 403],
+    [access, "?provinceId=" + randomUUID(), 404], [access, "?districtId=" + randomUUID(), 404],
+    [access, "?substationId=" + randomUUID(), 404],
+    [access, "?provinceId=" + f.local.provinceId + "&districtId=" + f.foreign.publicId, 400],
+    [access, "?districtId=" + f.local.publicId + "&substationId=" + f.stations[1].publicId, 400]];
+  for (const query of ["?provinceId=bad", "?districtId=bad", "?substationId=bad", "?provinceId=x&provinceId=y",
+    "?installationId=" + installationId, "?offset=-1", "?offset=1.2", "?offset=9007199254740992", "?limit=0", "?limit=201",
+    "?limit=1&limit=2", "?sort=other", "?from=2026-02-30T00:00:00Z", "?to=bad", "?from=2026-10-08T00:00:00Z&to=2026-10-08T00:00:00Z"])
+    requests.push([access, query, 400]);
+  for (const [auth, query, status] of requests) {
+    const result = await regional(auth, query, { "If-None-Match": "*" });
+    assert.equal(result.status, status, query);
+    assert.equal(result.body.items, undefined);
+    assert.equal(result.body.count, undefined);
+    assert.equal(result.headers.etag, undefined);
+    assert.equal(result.headers["last-modified"], undefined);
+    assert.equal(result.headers["cache-control"], "no-store");
+  }
+});
+
+integration("regional cache validators reflect scoped context and full envelope after fresh authentication and limiting", async () => {
+  const f = await regionalFixture();
+  const { access, user } = await analyst();
+  const first = await regional(access, "?limit=1");
+  for (const tag of [first.headers.etag, "W/" + first.headers.etag, '"other", ' + first.headers.etag, "*"]) {
+    const cached = await regional(access, "?limit=1", { "If-None-Match": tag });
+    assert.equal(cached.status, 304);
+    assert.equal(cached.text, "");
+    assert.equal(cached.headers["content-type"], undefined);
+  }
+  assert.equal((await regional(access, "?limit=1", { "If-Modified-Since": new Date().toUTCString() })).status, 200);
+  assert.notEqual((await regional(access, "?limit=2")).headers.etag, first.headers.etag);
+  await models.GenerationReading.create({ installationId, recordedAt: new Date("2000-01-01T00:00:00Z"), powerKw: 0, energyKwh: 0, voltageV: 230 });
+  const changed = await regional(access, "?limit=1", { "If-None-Match": first.headers.etag });
+  assert.equal(changed.status, 200);
+  assert.deepEqual(changed.body.items, first.body.items);
+  assert.equal(changed.body.count, 10);
+  await models.User.updateOne({ publicId: user.publicId }, { $set: { readScope: "district", districtId: f.local.publicId } });
+  const scoped = await regional(access, "?limit=1", { "If-None-Match": changed.headers.etag });
+  assert.equal(scoped.status, 200);
+  assert.equal(scoped.body.count, 4);
+  const denied = await regional(access, "?districtId=" + f.foreign.publicId, { "If-None-Match": "*" });
+  assert.equal(denied.status, 403);
+  const { createHash } = require("node:crypto");
+  await Counter.updateOne({ _id: "user-read:" + createHash("sha256").update(user.publicId).digest("hex") },
+    { $set: { count: 120, expiresAt: new Date(Date.now() + 60000) } });
+  const limited = await regional(access, "?limit=1", { "If-None-Match": scoped.headers.etag });
+  assert.equal(limited.status, 429);
+  assert.ok(Number(limited.headers["retry-after"]) > 0);
+  assert.equal(limited.headers.etag, undefined);
+  await models.User.deleteOne({ publicId: user.publicId });
+  assert.equal((await regional(access)).status, 401);
+});
+
+integration("regional list uses a single snapshot and fails closed on broken ancestry and database errors", async t => {
+  await history(2);
+  const { access } = await analyst();
+  const original = models.GenerationReading.countDocuments;
+  let inserted = false;
+  t.mock.method(models.GenerationReading, "countDocuments", function (...args) {
+    const query = original.apply(this, args);
+    const exec = query.exec;
+    query.exec = async function (...args) {
+      const total = await exec.apply(this, args);
+      if (!inserted) {
+        inserted = true;
+        await models.GenerationReading.create({ installationId, recordedAt: new Date("2026-10-08T00:02:00Z"), powerKw: 2, energyKwh: 2, voltageV: 230 });
+      }
+      return total;
+    };
+    return query;
+  });
+  const snapshot = await regional(access);
+  assert.equal(snapshot.body.count, 2);
+  assert.equal(snapshot.body.items.length, 2);
+  assert.equal(await count(), 3);
+  t.mock.restoreAll();
+  const province = await models.Province.findOne({});
+  await models.Province.collection.deleteOne({ publicId: province.publicId });
+  assert.deepEqual((await regional(access)).body, { count: 0, next: null, previous: null, items: [] });
+  const missing = await regional(access, "?provinceId=" + province.publicId);
+  assert.equal(missing.status, 404);
+  t.mock.method(models.Province, "find", () => { throw new Error("private diagnostics"); });
+  const failed = await regional(access);
+  assert.equal(failed.status, 500);
+  assert.equal(failed.body.code, "INTERNAL_SERVER_ERROR");
+  assert.equal(failed.headers.etag, undefined);
+  assert.ok(!failed.text.includes("private diagnostics"));
 });

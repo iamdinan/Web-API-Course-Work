@@ -94,6 +94,16 @@ Return `{ "count": 0, "next": null, "previous": null, "items": [] }`. Count incl
 
 Return `Cache-Control: private, no-cache` and a strong ETag covering the current principal, installation ID, effective query and complete envelope, including count/links. Matching If-None-Match returns bodyless 304 with validators after current authorization and rate limiting, using existing conditional handling. Omit Last-Modified: no reliable revision is stored for the complete collection representation. If-Modified-Since alone therefore returns 200. Denied/error responses use no-store, contain no items/counts, and omit ETag and Last-Modified; 429 includes Retry-After.
 
+## Regional reading history
+
+`GET /readings` requires current user JWT authentication and the shared 120/minute User read limit. Installation tokens return 401. Without geography filters, national analysts/admins see national history, provincial analysts their province, and district analysts their district. Include inactive installation history. Resolve complete province/district/substation/installation ancestry and apply the stored jurisdiction before querying readings, counting, paging, or generating validators.
+
+Accept the [installation history](#installation-reading-history) parameters and defaults, plus single-valued public UUID v4 provinceId, districtId and substationId. Resolve explicit filters and their ancestors; missing geography/ancestry returns 404 NOT_FOUND. Explicit filters outside stored jurisdiction return 403 FORBIDDEN. A district analyst may select their own parent province but results remain limited to their district. Check each filter's access before comparing their ancestry: authorized filters with contradictory relationships return 400 INVALID_QUERY. Malformed UUIDs and invalid/repeated/unsupported query parameters also return 400 INVALID_QUERY. Missing implicit ancestry yields an empty scope rather than broadening access.
+
+Reuse the public reading list envelope and serialization. Count covers all matching authorized readings before pagination; recordedAt/publicId ordering is deterministic and defaults to newest first. Links point to `/api/v1.0/readings` and preserve all supplied geography/time filters, effective sort, and limit while changing offset. No matches return count=0, null links and empty items. Read ancestry, count and items in one snapshot.
+
+Private caching, conditional GET, no reliable collection Last-Modified, and rate-limit responses follow installation history. ETag covers current authorized principal, effective query and the complete envelope; authorization and rate limiting precede any 304. Denied/error responses use no-store and expose neither data/counts nor ETag/Last-Modified. No changes to the protected province-list filter policy are implied.
+
 ## Resource and query rules
 
 - Use `/api/v1.0` as the common base path, lowercase hyphenated segments, plural collection nouns, and IDs after collection names. Nest collections under their parent. The district summary is a top-level, verb-named processing function.
