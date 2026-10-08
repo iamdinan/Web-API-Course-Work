@@ -72,7 +72,12 @@ async function checkAdminWriteLimit(userId) {
   return consume("admin-write", userId, 30, 60 * 1000);
 }
 
+async function checkDocumentationLimit(ip) {
+  return consume("documentation-ip", ip, 60, 60 * 1000);
+}
+
 module.exports = {
+  checkDocumentationLimit,
   checkAdminWriteLimit,
   checkUserTokenLimit,
   checkDeviceTokenLimit,

@@ -6,6 +6,8 @@ const { notFound, errorHandler } = require('./middleware/error-handler');
 const app = express();
 app.disable('x-powered-by');
 app.set('etag', 'strong');
+// HTML and UI assets negotiate their own media types outside the JSON API gate.
+app.use(`${apiBaseUrl}/docs`, require('./features/documentation/documentation.routes'));
 app.use(apiBaseUrl, (req, res, next) => {
   if (req.method === 'POST' && /^\/auth\/(user|device)-tokens\/?$/i.test(req.path)) {
     res.set({ 'Cache-Control': 'no-store', Pragma: 'no-cache' });

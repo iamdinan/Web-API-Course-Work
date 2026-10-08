@@ -19,6 +19,7 @@ const password = "test password with spaces ";
 let origin, server, hash;
 
 before(async () => {
+  require('node:test').mock.method(limits, 'checkDocumentationLimit', async () => 0);
   const salt = "a".repeat(32);
   hash = `scrypt$${salt}$${(await promisify(scrypt)(password, salt, 64)).toString("hex")}`;
   server = app.listen(0, "127.0.0.1");

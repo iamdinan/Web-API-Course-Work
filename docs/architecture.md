@@ -6,7 +6,7 @@ This document defines the target stored data, resource surface, authorization, a
 
 Express serves JSON under `/api/v1.0`; production HTTPS terminates at the deployment proxy. `src/app.js` mounts the prefix; `src/index.js` awaits MongoDB before listening, fails startup on connection failure and closes HTTP/MongoDB on SIGINT/SIGTERM. Health is liveness without a database query.
 
-`src/features/` groups auth, provinces, districts, grid-substations, installations, readings, district-summary and health. Keep routes thin; separate validation, authorization, HTTP controllers and business/persistence services. Static health needs only its route. Readings owns public reading serialization; auth shares credential validation. `src/routes/api.routes.js` composes features and serves OpenAPI.
+`src/features/` groups auth, provinces, districts, grid-substations, installations, readings, district-summary, health and documentation. Keep routes thin; separate validation, authorization, HTTP controllers and business/persistence services. Static health needs only its route. Readings owns public reading serialization; auth shares credential validation. `src/routes/api.routes.js` composes JSON features and serves OpenAPI; the app mounts documentation HTML/assets separately for media negotiation, sharing the OpenAPI documentation limiter.
 
 Shared middleware owns JWT/ownership verification, rate enforcement and errors; shared services own passwords/JWTs, current principals, ancestry/access and counters. Utilities own timestamps, list responses, HTTP errors, public-path/query rejection and response validators; models/configuration remain shared. Extract helpers when multiple features/setup tools need them. All query-free routes reuse rejectQueryParameters; protected reads keep authentication/read-limit/path checks first, while writes validate access/body/query before write counters. Public health/OpenAPI also reject queries. Exact HTTP errors belong to the HTTP contract.
 
@@ -222,7 +222,7 @@ Counters live in operational `token_rate_limits`, outside the six domain models.
 | Device ingestion | 30 / min | Installation and IP | Implemented |
 | User/admin reads | 120 / min | User | Implemented |
 | Admin installation writes | 30 / min | Admin; shared POST/PATCH/DELETE | Implemented |
-| Public docs | 60 / min | IP | Planned |
+| Public docs | 60 / min | IP; shared specification, Swagger page and assets | Implemented |
 | Backstop | 300 / min | IP | Planned |
 
 [HTTP rules](API_DESIGN_RULES.md#rate-limits) own consumption timing/429 responses; [pending decisions](decisions.md#pending-decisions) cover remaining thresholds.

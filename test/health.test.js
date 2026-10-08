@@ -13,6 +13,7 @@ const { apiBaseUrl } = require('../src/config/env');
 let server;
 let origin;
 before(async () => {
+  require('node:test').mock.method(require('../src/services/token-rate-limit.service'), 'checkDocumentationLimit', async () => 0);
   server = app.listen(0, '127.0.0.1');
   await once(server, 'listening');
   origin = `http://127.0.0.1:${server.address().port}`;
@@ -80,13 +81,19 @@ test('served OpenAPI describes health under the configured prefix', async () => 
 test('environment override controls route mounting and OpenAPI together', () => {
   const script = `
     const app = require('./src/app');
+    require('./src/services/token-rate-limit.service').checkDocumentationLimit = async () => 0;
     const server = app.listen(0, '127.0.0.1', async () => {
       try {
         const origin = 'http://127.0.0.1:' + server.address().port;
         const health = await fetch(origin + '/custom/v2/health');
         const old = await fetch(origin + '/api/v1.0/health');
         const spec = await (await fetch(origin + '/custom/v2/openapi.json')).json();
-        console.log(JSON.stringify({ health: health.status, old: old.status, servers: spec.servers }));
+        const docs = await fetch(origin + '/custom/v2/docs', { headers: { Accept: 'text/html' } });
+        const html = await docs.text();
+        const css = await fetch(origin + '/custom/v2/docs/swagger-ui.css');
+        await css.text();
+        console.log(JSON.stringify({ health: health.status, old: old.status, servers: spec.servers,
+          docs: docs.status, css: css.status, configuredUi: html.includes('url: "/custom/v2/openapi.json"') }));
       } catch (error) { console.error(error); process.exitCode = 1; }
       finally { server.close(); }
     });
@@ -95,7 +102,7 @@ test('environment override controls route mounting and OpenAPI together', () => 
     cwd: path.resolve(__dirname, '..'),
     env: { ...process.env, API_BASE_URL: '/custom/v2' }, encoding: 'utf8', timeout: 15000,
   });
-  assert.deepEqual(JSON.parse(output), { health: 200, old: 404, servers: [{ url: '/custom/v2' }] });
+  assert.deepEqual(JSON.parse(output), { health: 200, old: 404, servers: [{ url: '/custom/v2' }], docs: 200, css: 200, configuredUi: true });
 });
 
 test('configuration rejects invalid base paths and ports before startup', () => {

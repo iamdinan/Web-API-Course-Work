@@ -54,6 +54,8 @@ Explicit regional installation/reading filters: missing geography/ancestry 404, 
 
 Exhaustion returns 429 RATE_LIMIT_EXCEEDED with integer Retry-After seconds. Counter failures fail closed. Do not replace shared limits with per-process limits.
 
+Public GET `/openapi.json`, `/docs` (with or without trailing slash), and `/docs/swagger-ui.css` and `/docs/swagger-ui-bundle.js` share the documentation IP budget after query rejection and before conditional responses. Invalid queries do not count; valid page, asset and specification requests each count. Errors are standard JSON with no-store and no validators, including counter failures. `/docs` serves HTML and its assets negotiate their own media types outside the JSON-only gate; unacceptable media types return bodyless 406. Documentation representations use no-cache. UI URL configuration overrides are disabled; specification fetches contain no unsupported query parameters. Deployment IP attribution follows the existing proxy convention; trusted proxy setup remains a deployment decision.
+
 ## Caching and access
 
 Protected GETs use Cache-Control: private, no-cache and stable strong ETags after current authentication, rate limiting and authorization. Errors use no-store without validators or data/counts. Bodyless 304 retains applicable cache/validator headers and omits Content-Type.

@@ -18,6 +18,7 @@ const meterId = "METER-01-03", deviceSecret = " independent device secret ";
 let server, origin, hash;
 
 before(async () => {
+  require('node:test').mock.method(limits, 'checkDocumentationLimit', async () => 0);
   hash = await hashPassword(deviceSecret);
   server = app.listen(0, "127.0.0.1");
   await once(server, "listening");

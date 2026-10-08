@@ -16,6 +16,7 @@ const limits = require("../src/services/token-rate-limit.service");
 const { verifyUserJwt } = require("../src/middleware/verify-user-jwt");
 let origin, server;
 before(async () => {
+  require('node:test').mock.method(limits, 'checkDocumentationLimit', async () => 0);
   server = app.listen(0, "127.0.0.1");
   await once(server, "listening");
   origin = `http://127.0.0.1:${server.address().port}${apiBaseUrl}/provinces`;

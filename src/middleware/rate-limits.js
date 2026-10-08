@@ -31,4 +31,14 @@ async function adminWriteLimit(req, res, next) {
   next();
 }
 
-module.exports = { userReadLimit, deviceWriteLimit, adminWriteLimit };
+async function documentationLimit(req, res, next) {
+  res.locals.omitErrorValidators = true;
+  const retryAfter = await limits.checkDocumentationLimit(req.ip);
+  if (retryAfter) {
+    res.set("Retry-After", String(retryAfter));
+    return sendError(res, 429, { code: "RATE_LIMIT_EXCEEDED", message: "Too many documentation requests. Try again later.", details: [] });
+  }
+  next();
+}
+
+module.exports = { userReadLimit, deviceWriteLimit, adminWriteLimit, documentationLimit };

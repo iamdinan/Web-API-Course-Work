@@ -13,6 +13,7 @@ const models = require("../src/models");
 const limits = require("../src/services/token-rate-limit.service");
 let server, origin;
 before(async () => {
+  require('node:test').mock.method(limits, 'checkDocumentationLimit', async () => 0);
   server = app.listen(0, "127.0.0.1");
   await once(server, "listening");
   origin = `http://127.0.0.1:${server.address().port}${apiBaseUrl}`;

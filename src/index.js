@@ -16,6 +16,7 @@ async function startServer() {
       `  API base:  ${apiUrl}`,
       `  Health:    ${apiUrl}/health`,
       `  OpenAPI:   ${apiUrl}/openapi.json`,
+      `  Docs:      ${apiUrl}/docs`,
     ].join("\n"),
   );
 

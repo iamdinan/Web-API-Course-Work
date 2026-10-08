@@ -158,6 +158,10 @@ Reject all supplied query parameters on endpoints with no query options. Silent 
 
 Add status=active|inactive only to the paginated top-level installation list so analysts/admins can find operating or suspended installations. Omission retains both statuses; apply status within jurisdiction/geography before count/page and include it in links/validator context. Reject invalid/repeated values. Nested substation lists retain their full query-free collection contract. This extends D25 without changing fixed UUID ordering or stored access.
 
+## D40 - Public documentation serving
+
+Public documentation now uses the existing shared MongoDB counter at its documented 60/minute IP threshold. Serve bundled Swagger UI assets with `swagger-ui-dist`, using the prefix-aware, same-origin specification URL; this avoids another routing dependency or CDN requirement. Keep strict query rejection and disable Swagger URL overrides/online validation. The validator is development-only. No domain behavior changes; JSON operation inventory excludes HTML documentation assets.
+
 ## Pending decisions
 
 | Topic | Decision needed |
