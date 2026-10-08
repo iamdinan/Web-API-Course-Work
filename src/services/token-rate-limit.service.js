@@ -68,7 +68,12 @@ async function checkDeviceWriteLimit(ip, installationId) {
   return consume("device-write-installation", installationId, 30, 60 * 1000);
 }
 
+async function checkAdminWriteLimit(userId) {
+  return consume("admin-write", userId, 30, 60 * 1000);
+}
+
 module.exports = {
+  checkAdminWriteLimit,
   checkUserTokenLimit,
   checkDeviceTokenLimit,
   checkUserReadLimit,

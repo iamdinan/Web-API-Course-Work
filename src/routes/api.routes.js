@@ -11,6 +11,7 @@ router.use('/provinces', require('../features/provinces/provinces.routes'));
 router.use('/', require('../features/districts/districts.routes'));
 router.use('/', require('../features/grid-substations/grid-substations.routes'));
 router.use('/', require('../features/readings/readings.routes'));
+router.use('/', require('../features/installations/installations.routes'));
 router.use('/', require('../features/district-summary/district-summary.routes'));
 router.get('/openapi.json', (req, res) => {
   res.set('Cache-Control', 'no-cache').json({

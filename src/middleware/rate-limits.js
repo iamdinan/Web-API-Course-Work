@@ -22,4 +22,13 @@ async function deviceWriteLimit(req, res, next) {
   next();
 }
 
-module.exports = { userReadLimit, deviceWriteLimit };
+async function adminWriteLimit(req, res, next) {
+  const retryAfter = await limits.checkAdminWriteLimit(req.user.id);
+  if (retryAfter) {
+    res.set("Retry-After", String(retryAfter));
+    return sendError(res, 429, { code: "RATE_LIMIT_EXCEEDED", message: "Too many installation writes. Try again later.", details: [] });
+  }
+  next();
+}
+
+module.exports = { userReadLimit, deviceWriteLimit, adminWriteLimit };

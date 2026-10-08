@@ -13,6 +13,10 @@ app.use(apiBaseUrl, (req, res, next) => {
   if (req.method === 'POST' && /^\/installations\/[^/]+\/readings\/?$/i.test(req.path)) {
     res.set('Cache-Control', 'no-store');
   }
+  if (req.method === 'POST' && /^\/installations\/?$/i.test(req.path)) {
+    res.set('Cache-Control', 'no-store');
+    res.locals.omitErrorValidators = true;
+  }
   if (req.method === 'GET' && (/^\/installations(?:\/[^/]+(?:\/(readings|last-reading|overview))?)?\/?$/i.test(req.path) || /^\/readings\/?$/i.test(req.path) || /^\/summarize-district-generation\/?$/i.test(req.path) || /^\/grid-substations\/[^/]+(?:\/installations)?\/?$/i.test(req.path) || /^\/districts\/[^/]+(?:\/grid-substations)?\/?$/i.test(req.path) || /^\/provinces\/[^/]+(?:\/districts)?\/?$/i.test(req.path))) {
     // Include negotiation/parser failures that happen before the protected route.
     res.set('Cache-Control', 'no-store');

@@ -1560,10 +1560,10 @@ integration("installation count/page use scoped filters and one snapshot, share 
   assert.equal(failed.headers.etag, undefined);
 });
 
-test("OpenAPI installation collection exposes documented filters, envelope and GET only", () => {
+test("OpenAPI installation collection exposes documented read filters and envelope alongside creation", () => {
   const spec = require("../docs/openapi.json");
   const resource = spec.paths['/installations'];
-  assert.deepEqual(Object.keys(resource), ["get"]);
+  assert.deepEqual(Object.keys(resource), ["get", "post"]);
   assert.deepEqual(resource.get.security, [{ UserBearer: [] }]);
   assert.deepEqual(resource.get.parameters.filter(p => p.in === "query").map(p => p.name),
     ["provinceId", "districtId", "substationId", "offset", "limit"]);

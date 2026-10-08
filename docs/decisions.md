@@ -183,6 +183,11 @@ This file records choices, their reasons, and unresolved questions. Concrete sch
 - **Choice:** Extend the existing installation-list service with an optional URL substation parent, reusing geography authorization, count/result queries and public serializer. The nested endpoint returns the complete count/items collection, fixed public UUID order, including active/inactive records. No query options, pagination or next/previous fields.
 - **Reason:** The user requested removing pagination for this small collection (about ten installations per substation). Shared persistence logic keeps scoped counts and snapshots consistent with the top-level list. Explicit parent authorization precedes installation queries and conditional responses. Include parent UUID in validators even for identical empty collections. Top-level GET /installations retains its existing pagination.
 
+## D33 - Admin installation provisioning
+
+- **Choice:** Implement POST /installations using current stored admin authorization, the existing validated model/public serializer/strong ETag and shared salted scrypt helper. Accept independent supplied device secrets; development prefix derivation remains confined to dataset seeding. Meter IDs follow existing model trimming; secrets retain exact characters. No new credential complexity/length policy is imposed.
+- **Reason:** Current role prevents stale JWT privileges. The unique meter index reserves inactive meters and handles concurrent duplicate requests. Reusing the detail representation makes the creation ETag usable on subsequent GET. Adopt the documented initial shared 30 writes/minute per admin, counting valid-shaped attempts. No pending decision blocks this requested implementation; PATCH and DELETE remain planned.
+
 ## Pending decisions
 
 | Topic | Decision needed |
