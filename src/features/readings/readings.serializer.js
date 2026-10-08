@@ -1,4 +1,4 @@
-const { createHash } = require("node:crypto");
+const { strongETag } = require("../../utils/response-validators");
 
 const { displayTimestamp } = require("../../utils/timestamps");
 
@@ -23,7 +23,7 @@ function installationBody(document) {
 function installationETag(body) {
   // Canonical public fields only; future admin preconditions must reuse this tag.
   const canonical = { id: body.id, substationId: body.substationId, meterId: body.meterId, status: body.status };
-  return `"${createHash("sha256").update(JSON.stringify(canonical)).digest("hex")}"`;
+  return strongETag(canonical);
 }
 
 function overviewBody(ancestry, latestReading) {

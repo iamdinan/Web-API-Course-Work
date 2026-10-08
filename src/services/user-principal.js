@@ -11,7 +11,7 @@ function currentUserPrincipal(user) {
   const principal = { id: user.publicId, role: user.role, readScope: user.readScope };
   if (province) principal.provinceId = user.provinceId;
   if (district) principal.districtId = user.districtId;
-  if (user.role === "admin") principal.permissions = Object.freeze(["installation-create", "installation-deactivate", "installation-delete"]);
+  if (user.role === "admin") principal.permissions = Object.freeze(["installation-create", "installation-status-update", "installation-delete"]);
   return Object.freeze(principal);
 }
 

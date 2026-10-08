@@ -1,6 +1,6 @@
 # API Design Rules
 
-This file defines the HTTP contract using the applicable WSO2 REST design rules. [architecture.md](architecture.md) owns concrete paths, access assignments, and persistence guarantees. The [README](../README.md#current-implementation) distinguishes implemented features from planned behavior; [OpenAPI](openapi.json) describes implemented routes only.
+HTTP contract using applicable WSO2 REST design rules. [Architecture](architecture.md) owns stored schemas, target paths, access and persistence; [README](../README.md#current-implementation) tracks availability. [OpenAPI](openapi.json) documents implemented operations/schemas. Shared rules below apply unless an endpoint states an exception.
 
 ## Responses
 
@@ -8,7 +8,7 @@ Public reading timestamps `recordedAt` and `receivedAt` use ISO 8601 Sri Lankan 
 
 | Status | When | Body and key headers |
 | --- | --- | --- |
-| 200 OK | Successful GET, token exchange, or installation deactivation | JSON; `Content-Type: application/json`. GET may include `ETag` and a reliable `Last-Modified`. Installation GET and PATCH return the strong ETag of the public installation representation; PATCH returns its resulting public fields. |
+| 200 OK | Successful GET, token exchange, or installation status update | JSON; `Content-Type: application/json`. GET may include `ETag` and a reliable `Last-Modified`. Installation GET and PATCH return the strong ETag of the public installation representation; PATCH returns its resulting public fields. |
 | 201 Created | Device creates a reading or admin creates an installation | Created resource as JSON; `Location` points to its GET; `ETag`. For readings, `Last-Modified` comes from `receivedAt`; the installation GET requires a jurisdiction-authorized user. |
 | 204 No Content | Admin hard-deletes an installation with no readings | No body; no JSON Content-Type or deleted-resource validators. |
 | 304 Not Modified | Conditional GET matches current representation | **No body**; preserve relevant cache validators. |
@@ -30,188 +30,146 @@ All JSON errors use `{ "code": "...", "message": "...", "details": [] }`. Never 
 
 Public health GET returns `{ "status": "ok" }` with a stable strong ETag and `Cache-Control: no-cache`. Matching conditional requests return bodyless 304; Accept excluding JSON returns bodyless 406. Malformed JSON returns 400 `INVALID_JSON`. Oversized JSON uses the 413 response above. Health is application liveness, not a database readiness probe.
 
-## User token exchange
-
-`POST /auth/user-tokens` accepts an `application/json` object containing exactly `email` and `password` strings. Trim/lowercase email; require a valid email and a non-whitespace password, preserving the password's exact characters. Reject missing/unknown fields, arrays, objects in place of strings, and empty values with 400 `INVALID_REQUEST`; malformed JSON uses 400 `INVALID_JSON`. Unsupported Content-Type uses 415 `UNSUPPORTED_MEDIA_TYPE`.
-
-Success returns 200 `{ "access_token": "<signed JWT>", "token_type": "Bearer", "expires_in": 900, "userId": "<public UUID>" }`, where the lifetime is configured in seconds. `userId` is the authenticated stored User public UUID and equals the JWT `sub`; it is returned for both users and admins. Return `Cache-Control: no-store` and `Pragma: no-cache` for this POST, including errors; successful token responses have no ETag or Last-Modified. No refresh token is issued.
-
-Unknown users and password mismatches return the same 401 `INVALID_CREDENTIALS` with message `Invalid email or password.` and `WWW-Authenticate: Bearer`. Never include submitted credentials, stored hashes, or internal IDs in errors. Unexpected persistence/signing failures return the standard 500 error.
-
-After request validation and before password verification, apply shared 5-attempt/15-minute IP and normalized-email counters. Exceeded limits return 429 `RATE_LIMIT_EXCEEDED` with integer `Retry-After` seconds. Rejected request shapes do not consume these credential-attempt counters. JSON negotiation and the 100 KB parser limit follow the general rules above.
-
-## Device token exchange
-
-`POST /auth/device-tokens` accepts an `application/json` object containing exactly `meterId` and `deviceSecret` as nonempty, non-whitespace strings. Preserve both values exactly. Missing/unknown fields and invalid types use 400 `INVALID_REQUEST` with message `Provide only a nonempty meterId and deviceSecret.` Parser, media type, negotiation, successful token response, and no-store/Pragma behavior follow the [user-token exchange](#user-token-exchange).
-
-Successful device login returns the same token fields as user login with `installationId` instead of `userId`: the authenticated stored installation public UUID, equal to JWT `sub`. No MongoDB `_id` or credentials are returned.
-
-Unknown meters and secret mismatches return identical 401 `INVALID_CREDENTIALS` errors with message `Invalid meter ID or device secret.` and `WWW-Authenticate: Bearer`. Verify the submitted secret before evaluating status: valid credentials for an inactive installation return 403 `INSTALLATION_INACTIVE` with message `Inactive installations cannot obtain device tokens.` Neither error returns a token. Unexpected persistence/signing failures use the standard sanitized 500.
-
-After validation and before credential lookup, apply shared MongoDB counters of 5 attempts per 15 minutes per IP and exact meter ID, using separate namespaces from user login. Excess attempts use the existing 429 login error and integer `Retry-After`. Invalid request shapes do not consume credential-attempt counters. Installation JWT claims are defined in the [architecture](architecture.md#device-token-implementation).
-
-## Installation JWT verification and ownership
-
-Installation-only middleware reads `Authorization: Bearer <token>` and verifies the configured signature/algorithm, issuer, audience, expiry, public UUID subject, and bounded issued/expiry claims. Missing, malformed, invalid, expired, or wrong-actor tokens return 401 `UNAUTHORIZED` with `WWW-Authenticate: Bearer` and message `A valid installation bearer token is required.` A deleted installation or invalid stored principal also returns this same 401. Wrong-actor tokens use 401 in both user and installation authentication.
-
-A valid installation actor without exactly `scope=installation-write` returns 403 `FORBIDDEN` with message `The token does not permit installation writes.` Current inactive installations return 403 `INSTALLATION_INACTIVE` with message `Inactive installations cannot authenticate for writes.` URL ownership mismatches return 403 `FORBIDDEN` with message `The authenticated installation cannot access this installation.` Ownership checks without authenticated installation context return the installation 401 above. All errors use the standard JSON shape; persistence failures remain sanitized 500s.
-
-These middleware protect reading submission below. Token issuance keeps its existing credential/status responses.
-
-## Device reading submission
-
-`POST /installations/{installationId}/readings` uses installation JWT verification and exact URL ownership. User/admin tokens return 401; insufficient scope, inactive status, and ownership mismatch return 403. Deleted installations return 401, including when deletion wins a concurrent insertion transaction.
-
-Accept an `application/json` object containing exactly `recordedAt`, `powerKw`, `energyKwh`, and `voltageV`. Measurements must be finite nonnegative JSON numbers; strings are not coerced. Reject missing/unknown fields, including client IDs, installation binding, and receipt time, with 400 `INVALID_REQUEST`. `recordedAt` must be a valid calendar ISO 8601 timestamp (`YYYY-MM-DDTHH:mm:ss[.SSS]Z` or an explicit `+/-HH:mm` offset), with one to three fractional digits when present. Reject timezone-free values, calendar overflow, leap seconds, and precision beyond BSON milliseconds. Clock-drift, age, and measurement upper bounds remain unresolved; none are enforced.
-
-After authentication, ownership, and body validation, consume shared counters of 30 submissions/minute per installation public UUID and IP, in separate device-write namespaces. Valid-shaped attempts, including duplicates, consume counters. Exceeded limits return 429 `RATE_LIMIT_EXCEEDED` and integer `Retry-After` seconds. Parser, negotiation, and media-type errors follow the general contract.
-
-Identity, ownership, receipt time, and atomic insertion follow the [architecture transaction strategy](architecture.md#reading-ingestion). Duplicate `(installationId, recordedAt)` returns 409 `DUPLICATE_READING` without overwriting. Return 201 with `id`, `installationId`, both ISO timestamps, both derived display timestamps, and the three measurements. Include a strong ETag for the exact public representation, `Last-Modified` from `receivedAt` as an HTTP date, and `Location: /api/v1.0/installations/{installationId}/readings/{readingId}` (respect the configured prefix). All submission responses use `Cache-Control: no-store`. The Location identifies the user-authorized reading GET; see [current implementation](../README.md#current-implementation) for route availability.
-
-## Protected province list
-
-`GET /provinces` requires a user bearer JWT. Missing/malformed/invalid/expired tokens, non-user actors, removed users, or invalid stored role/scope assignments return 401 `UNAUTHORIZED` with `WWW-Authenticate: Bearer`. Use one generic message, `A valid user bearer token is required.`; do not disclose token-validation details. Persistence failures remain sanitized 500s.
-
-Apply the current stored jurisdiction and optional geographic filters before count/paging. Return the standard list envelope with public `{ "id": "<UUID>", "name": "..." }` items ordered by name then public ID. Accept only single-valued `provinceId`, `districtId`, `substationId`, `offset`, and `limit`; malformed UUIDs, unknown/repeated fields, invalid paging, or conflicting ancestry among visible targets return 400 `INVALID_QUERY`. Unknown/out-of-scope filter targets return 200 with an empty scoped list.
-
-Successful responses use `Cache-Control: private, no-cache` and a stable strong ETag tied to the current principal and exact scoped representation. Omit Last-Modified because no reliable geography modification time is stored. Authenticate/reload User, apply the shared 120/minute user read limit, and scope the representation before conditional GET evaluation. Matching If-None-Match returns bodyless 304 with validators. Authentication, query, and rate-limit errors are not cacheable; 429 includes Retry-After seconds.
-
-## Province details
-
-`GET /provinces/{provinceId}` requires current user JWT authentication and the shared 120/minute User read limit. Installation tokens return 401 UNAUTHORIZED with WWW-Authenticate: Bearer. Validate provinceId as a public UUID v4 (400 INVALID_REQUEST); missing requested province returns 404 NOT_FOUND with message `Province not found.` National analysts/admins can read any province; provincial analysts only their assigned province; district analysts only the province containing their current assigned district. Other provinces, or broken assigned district ancestry for an existing requested province, return 403 FORBIDDEN with message `The province is outside your permitted jurisdiction.`
-
-Return only `{id,name}`, with no related collections. No query parameters; reject supplied options with 400 INVALID_QUERY. Authorize in a snapshot before data or validators. Strong ETag covers the current principal and public response; Cache-Control is private, no-cache. Matching strong/weak If-None-Match, a matching tag in a list, or * returns bodyless 304 with ETag/cache headers and no Content-Type. Recheck current authentication, access and shared limits before conditional responses. Omit Last-Modified because province metadata has no reliable change timestamp; If-Modified-Since alone returns 200. Errors use the standard schema, no-store and no ETag/Last-Modified.
-
-## Province districts
-
-`GET /provinces/{provinceId}/districts` requires current user JWT authentication and the shared 120/minute User read limit. Installation tokens return 401 UNAUTHORIZED with WWW-Authenticate: Bearer. Validate provinceId as a public UUID v4 (400 INVALID_REQUEST). Missing requested province returns 404 NOT_FOUND with message `Province not found.` National analysts/admins list all districts in the requested province; provincial analysts only within their assigned province. District analysts may request their own parent province, but receive only their assigned district. Other provinces return 403 FORBIDDEN with message `The province is outside your permitted jurisdiction.` Missing/broken assigned district ancestry fails closed with 403 for an existing requested province.
-
-Authorize the parent before querying district results. Bind the database list to the requested provinceId and, for district analysts, the stored district public UUID; never load sibling districts into their response or validator input. Return `{ "count": 0, "items": [] }`, with public id/provinceId/name items, sorted by name then public UUID ascending for deterministic order. Empty authorized provinces return 200 with an empty collection. This fixed order has no client-selectable sorting option. Accept no query parameters: pagination, sorting, geography or other supplied parameters return 400 INVALID_QUERY. Omit next/previous fields. Read parent authorization and full filtered list in one snapshot; count equals returned records.
-
-Use Cache-Control: private, no-cache and a stable strong ETag covering current authorized principal, requested province and the complete filtered count/items response. Matching If-None-Match (strong/weak, tag list or *) returns bodyless 304 with ETag/cache headers and no Content-Type only after current authentication, authorization and shared rate limiting. Omit Last-Modified because no reliable whole-collection change time exists; If-Modified-Since alone returns 200. Errors use no-store and omit validators/data/counts; 429 includes Retry-After.
-
-## District details
-
-`GET /districts/{districtId}` requires current user JWT authentication and the shared 120/minute User read limit. Installation tokens return 401 UNAUTHORIZED with WWW-Authenticate: Bearer. Validate districtId as a public UUID v4 (400 INVALID_REQUEST). Missing district or province ancestry returns 404 NOT_FOUND with message `District not found.` National analysts/admins read nationally; provincial analysts read districts within their stored province; district analysts only their assigned district. Other access returns 403 FORBIDDEN with message `The district is outside your permitted jurisdiction.` Authorize before data or validators.
-
-Return 200 with exactly id, provinceId and name. Use public UUIDs only; omit internal IDs, version/private metadata and related collections. Accept no query options; supplied query parameters return 400 INVALID_QUERY.
-
-Use Cache-Control: private, no-cache and a strong ETag covering the current authorized principal and complete public district representation. Matching If-None-Match (strong/weak, tag list or *) returns bodyless 304 with ETag/cache headers and no Content-Type only after current authentication, jurisdiction and shared rate limits. Omit Last-Modified because no reliable district metadata change time is stored; If-Modified-Since alone returns 200. Errors use no-store and omit validators; 429 includes Retry-After.
-
-## District grid substations
-
-`GET /districts/{districtId}/grid-substations` requires current user JWT authentication and the shared 120/minute User read limit. Installation tokens return 401 UNAUTHORIZED with WWW-Authenticate: Bearer. Validate districtId as a UUID v4 (400 INVALID_REQUEST). Missing district or province ancestry returns 404 NOT_FOUND with message `District not found.` National analysts/admins may access nationally; provincial analysts only districts in their stored province; district analysts only their assigned district. Other access returns 403 FORBIDDEN with message `The district is outside your permitted jurisdiction.` Authorize the parent before any substation query, count or validator.
-
-Return the full district collection without pagination. Accept no query parameters; offset, limit, geography filters, sort and other supplied query parameters return 400 INVALID_QUERY. Order by name ascending then public UUID ascending for deterministic ties.
-
-Return `{ "count": 0, "items": [] }`; items contain exactly id, districtId and name for substations in the URL district. Count equals the number of returned district substations. Empty authorized districts return 200 with count=0 and empty items. Omit next and previous entirely. Read parent ancestry and the full list in one snapshot; derive count from the returned records.
-
-Use Cache-Control: private, no-cache and a stable strong ETag covering current principal, district identity and the complete response. Matching If-None-Match (strong/weak, tag list or *) returns bodyless 304 with ETag/cache headers and no Content-Type only after current access and shared rate limits. Omit Last-Modified because no reliable whole-collection change timestamp exists; If-Modified-Since alone returns 200. Errors use no-store and omit validators/data/counts; 429 includes Retry-After.
-
-## Grid substation details
-
-`GET /grid-substations/{substationId}` requires current user JWT authentication and the shared 120/minute User read limit. Installation tokens return 401 UNAUTHORIZED with WWW-Authenticate: Bearer. Validate the public UUID v4 path parameter (400 INVALID_REQUEST). Resolve the substation, district and province before public data or validators; national analysts/admins read nationally, provincial analysts within their stored province and district analysts within their stored district. Cross-jurisdiction access returns 403 FORBIDDEN with message `The substation is outside your permitted jurisdiction.` Missing substation or ancestry returns 404 NOT_FOUND with message `Substation not found.` Broken ancestry fails closed even for national readers.
-
-Return 200 with exactly id, districtId and name, using public UUIDs only. Do not include internal IDs, version metadata, installations, reading history or credential fields. No new query filters or child-list endpoints are introduced.
-
-Use Cache-Control: private, no-cache and a stable strong ETag covering current authorized principal and public representation. Matching If-None-Match (strong/weak, matching tag in a list or *) returns bodyless 304 with ETag/cache headers and no Content-Type, only after current authentication, jurisdiction checks and shared rate limiting. Omit Last-Modified because no reliable substation metadata change time is stored; If-Modified-Since alone returns 200. Errors use no-store and omit validators; 429 includes Retry-After.
-
-## Individual reading
-
-`GET /installations/{installationId}/readings/{readingId}` requires user JWT authentication and current stored jurisdiction, following the same 401 contract as protected province reads. Installation tokens return 401. Authenticate, consume the shared 120/minute User read limit, validate both UUID v4 path parameters (400 `INVALID_REQUEST` on failure), and resolve installation ancestry before looking up the reading or evaluating validators. National analysts/admins read nationally; provincial/district analysts read only within their assigned ancestry.
-
-An existing installation with complete ancestry outside the analyst's stored jurisdiction returns 403 `FORBIDDEN` with message `The installation is outside your permitted jurisdiction.` This check precedes reading lookup, so it also applies when the supplied reading ID does not exist. Missing installation/ancestry/reading and reading/installation mismatch return 404 `NOT_FOUND` with message `Reading not found.`. Return 200 with the same public reading JSON as POST, including `+05:30` timestamps. Inactive installation history remains readable.
-
-Success uses `Cache-Control: private, no-cache`, the same exact-representation strong ETag as POST, and Last-Modified derived from immutable `receivedAt`. Matching If-None-Match (including a weak tag, matching tag in a list, or `*`) returns bodyless 304 with validators and no Content-Type. If-None-Match takes precedence whenever present; a nonmatching tag returns 200 even if If-Modified-Since would match. Without If-None-Match, an If-Modified-Since at or after Last-Modified returns 304; earlier or invalid dates return 200. Compare HTTP dates at whole-second resolution. Authentication, current jurisdiction, UUIDs, resource identity, and rate limits always precede conditional handling. Errors use no-store and do not include reading validators; 429 includes Retry-After.
-
-## Latest reading
-
-`GET /installations/{installationId}/last-reading` requires current user JWT authentication and the shared 120/minute User read limit. Installation tokens return 401. Validate the installation UUID v4 (400 `INVALID_REQUEST` on failure), then reuse complete installation ancestry authorization: national analysts/admins read nationally, provincial/district analysts within their stored jurisdiction. Cross-jurisdiction access returns 403 `FORBIDDEN` before reading lookup, even when no readings exist. Missing installation/ancestry or an installation without readings returns 404 `NOT_FOUND` with message `Reading not found.` Inactive installation history remains readable.
-
-Select the greatest recordedAt, with descending publicId as the deterministic tie-breaker; receivedAt does not determine which reading is latest. Return 200 with the existing public reading representation, including both ISO and display timestamps. No filters or pagination apply.
-
-Use the [individual-reading conditional contract](#individual-reading): private, no-cache; the exact public reading strong ETag; Last-Modified from the selected immutable reading receivedAt at whole-second precision. If-None-Match takes precedence over If-Modified-Since; matching conditions return bodyless 304 with validators and no Content-Type. Authentication, current jurisdiction, resource lookup and shared rate limiting precede conditional handling. A delayed older measurement leaves the selected reading and validators unchanged; a newer recordedAt changes the representation ETag. Last-Modified describes the selected reading receipt time, not the installation or the whole history; use ETag to distinguish changes within the same second. Errors use no-store and omit ETag/Last-Modified; 429 includes Retry-After.
-
-## Installation list
-
-`GET /installations` requires current user JWT authentication and the shared 120/minute User read limit. Installation tokens return 401 UNAUTHORIZED. National analysts/admins list nationally; provincial/district analysts see only their stored jurisdiction. Resolve complete geography and restrict installation queries before querying items, counts or validators. Explicit geography outside jurisdiction returns 403 FORBIDDEN; missing referenced geography/ancestry returns 404 NOT_FOUND. Authorize each filter before checking contradictory relationships; authorized contradictory ancestry returns 400 INVALID_QUERY. Missing implicit geography yields an empty scope, never unrestricted results.
-
-Accept only single-valued provinceId, districtId and substationId UUID v4 filters, offset (nonnegative safe integer, default 0) and limit (1-200, default 50). Offset plus limit must remain a safe integer. Reject malformed/repeated/unknown parameters, including status, sort, from and to, with 400 INVALID_QUERY. District analysts may select their parent province while results remain district-scoped. Include both active and inactive installations; no status filter is documented. Use ascending public UUID order for stable pagination; no client-selectable sort.
-
-Return `{ "count": 0, "next": null, "previous": null, "items": [] }`. Items contain exactly id, substationId, meterId and status via the shared public installation serializer. Count covers all matching authorized installations before paging. Links use the configured prefix and preserve supplied geography filters and effective limit. Empty results return 200 with count=0, null links and empty items. Offsets beyond the result retain the scoped count, with empty items and next=null. Read authorized geography, count and page in one snapshot.
-
-Use Cache-Control: private, no-cache and a strong ETag covering current authorized principal, effective query and the complete envelope including counts/links. Matching If-None-Match (strong/weak, tag list or *) returns bodyless 304 with validators and no Content-Type only after current authentication, authorization and shared rate limiting. Omit Last-Modified without a reliable whole-collection change time; If-Modified-Since alone returns 200. Denied/error responses use no-store, omit validators and expose no items/counts; 429 includes Retry-After. This collection ETag is distinct from installation-detail validators used for future If-Match.
-
-## Substation installation list
-
-`GET /grid-substations/{substationId}/installations` reuses the [installation-list service](#installation-list), public serializer and HTTP behavior, returning the full collection without pagination. Require current user JWT authentication (installation tokens return 401) and the shared 120/minute User read limit. Validate the path as a public UUID v4 (400 INVALID_REQUEST). Resolve the requested substation and complete district/province ancestry: missing resource/ancestry returns 404 NOT_FOUND with the existing geography error; national analysts/admins read any substation, provincial analysts within their assigned province, and district analysts within their assigned district. Otherwise return 403 FORBIDDEN. Authorize before installation queries, count or validators.
-
-Accept no query parameters: reject offset, limit, geography filters, status, sorting, time and any other parameters with 400 INVALID_QUERY. The URL selects the parent. Fixed ascending public UUID order and inclusion of active/inactive installations follow the existing list. Return only count/items; items contain id/substationId/meterId/status and belong to the URL substation. Count covers all returned installations. No next/previous fields or pagination links. Empty authorized lists return 200 with count=0 and items=[]. Parent resolution, count and complete result share one snapshot.
-
-Private, no-cache and bodyless conditional 304 follow the installation-list contract. Strong ETag includes current principal, parent substation ID and complete collection. Renew authentication/jurisdiction/rate checks before conditional handling. Omit Last-Modified; If-Modified-Since alone returns 200. Errors are no-store without validators, items or counts; 429 includes Retry-After.
-
-## Installation details
-
-`GET /installations/{installationId}` requires current user JWT authentication, the shared 120/minute User read limit and a valid UUID v4 installation path parameter. Installation tokens return 401 UNAUTHORIZED; invalid UUIDs return 400 INVALID_REQUEST. Resolve complete ancestry and enforce stored jurisdiction before returning data or validators. National analysts/admins read nationally; provincial/district analysts within their assignment. Cross-jurisdiction access returns 403 FORBIDDEN; missing installation or ancestry returns 404 NOT_FOUND with message `Installation not found.`
-
-Return 200 with exactly the [public installation fields](architecture.md#installation-details): id, substationId, meterId and status. Include active and inactive installations. Do not expose internal IDs, hashes, version/lock metadata, geography or readings.
-
-Use Cache-Control: private, no-cache and the canonical strong installation ETag described in architecture, independent of the reader. Future admin If-Match operations must use this same tag, rather than overview/history validators. Public status changes affect the tag; credential/internal metadata, geography names and new readings do not. Matching If-None-Match (strong/weak, matching tag in a list or *) returns bodyless 304 with ETag/cache headers and no Content-Type, only after current authentication, authorization and rate limiting. Omit Last-Modified because no reliable installation metadata change time is stored; never derive it from readings. If-Modified-Since alone returns 200. Errors use no-store and omit validators; 429 includes Retry-After. Installation writes remain unimplemented.
-
-## Installation overview
-
-`GET /installations/{installationId}/overview` requires current user JWT authentication and the shared 120/minute User read limit. Installation tokens return 401 UNAUTHORIZED. Validate the installation UUID v4 (400 INVALID_REQUEST), resolve complete ancestry, and enforce stored jurisdiction before selecting readings, composing data or evaluating validators. National analysts/admins read nationally; provincial/district analysts within their assigned geography. Cross-jurisdiction access returns 403 FORBIDDEN; missing installation or ancestry returns 404 NOT_FOUND with message `Installation not found.`
-
-Return 200 using the [architecture composite structure](architecture.md#installation-overview): installation, geography and latestReading. Latest is selected by greatest recordedAt with descending publicId tie-breaker, never by receivedAt. Empty history returns latestReading=null with installation/geography intact. Include inactive installations. Omit all internal IDs, credential hashes, locking/version metadata and full reading history.
-
-Return Cache-Control: private, no-cache and a stable strong ETag covering the current authorized principal and entire composite. Installation status, public geography fields and selected latest-reading changes affect the ETag; delayed older readings do not. Matching If-None-Match (strong/weak, tag list or *) returns bodyless 304 with ETag/cache headers and no Content-Type, only after authentication, rate limiting and authorization. Omit Last-Modified because no reliable revision time covers the whole composite; If-Modified-Since alone returns 200. Errors use no-store and omit ETag/Last-Modified; 429 includes Retry-After.
-
-## Installation reading history
-
-`GET /installations/{installationId}/readings` requires current user JWT authentication, the shared 120/minute User read limit, a valid installation public UUID, and the same ancestry authorization as individual readings. Installation tokens return 401. Missing installation/ancestry returns 404 `NOT_FOUND` with message `Installation not found.`; cross-jurisdiction access returns 403 `FORBIDDEN`. Inactive history remains readable. Authorization precedes every history query, count, page and cache validator.
-
-Accept only single-valued `offset` (nonnegative safe integer, default 0), `limit` (1-200, default 50), `from`, `to`, and `sort` (`timestamp` or `-timestamp`, default `-timestamp`). Offset plus limit must remain a safe integer. Use the [reading timestamp rules](#device-reading-submission) for from/to; from is inclusive and to exclusive. If both exist, require from < to. Reject malformed/repeated/unknown parameters and invalid paging/time ranges with 400 `INVALID_QUERY`. Percent-encode a positive timezone offset's `+` as `%2B` in query URLs.
-
-Return `{ "count": 0, "next": null, "previous": null, "items": [] }`. Count includes all matching installation readings before paging. Sort by recordedAt then publicId, both ascending for timestamp or descending for -timestamp. Items reuse the public reading representation. An authorized empty installation or empty time window returns 200 with an empty envelope. Links use the configured API prefix and preserve from/to, effective sort, and limit while changing offset. An offset beyond the result still reports the matching count with empty items; next is null.
-
-Return `Cache-Control: private, no-cache` and a strong ETag covering the current principal, installation ID, effective query and complete envelope, including count/links. Matching If-None-Match returns bodyless 304 with validators after current authorization and rate limiting, using existing conditional handling. Omit Last-Modified: no reliable revision is stored for the complete collection representation. If-Modified-Since alone therefore returns 200. Denied/error responses use no-store, contain no items/counts, and omit ETag and Last-Modified; 429 includes Retry-After.
-
-## Regional reading history
-
-`GET /readings` requires current user JWT authentication and the shared 120/minute User read limit. Installation tokens return 401. Without geography filters, national analysts/admins see national history, provincial analysts their province, and district analysts their district. Include inactive installation history. Resolve complete province/district/substation/installation ancestry and apply the stored jurisdiction before querying readings, counting, paging, or generating validators.
-
-Accept the [installation history](#installation-reading-history) parameters and defaults, plus single-valued public UUID v4 provinceId, districtId and substationId. Resolve explicit filters and their ancestors; missing geography/ancestry returns 404 NOT_FOUND. Explicit filters outside stored jurisdiction return 403 FORBIDDEN. A district analyst may select their own parent province but results remain limited to their district. Check each filter's access before comparing their ancestry: authorized filters with contradictory relationships return 400 INVALID_QUERY. Malformed UUIDs and invalid/repeated/unsupported query parameters also return 400 INVALID_QUERY. Missing implicit ancestry yields an empty scope rather than broadening access.
-
-Reuse the public reading list envelope and serialization. Count covers all matching authorized readings before pagination; recordedAt/publicId ordering is deterministic and defaults to newest first. Links point to `/api/v1.0/readings` and preserve all supplied geography/time filters, effective sort, and limit while changing offset. No matches return count=0, null links and empty items. Read ancestry, count and items in one snapshot.
-
-Private caching, conditional GET, no reliable collection Last-Modified, and rate-limit responses follow installation history. ETag covers current authorized principal, effective query and the complete envelope; authorization and rate limiting precede any 304. Denied/error responses use no-store and expose neither data/counts nor ETag/Last-Modified. No changes to the protected province-list filter policy are implied.
-
-## District generation summary
-
-`GET /summarize-district-generation?districtId=...` requires current user JWT authentication and the shared 120/minute User read limit. Installation tokens return 401 UNAUTHORIZED with WWW-Authenticate: Bearer. Accept exactly one required districtId public UUID v4 and no other query parameters; missing, invalid, repeated or unsupported parameters return 400 INVALID_QUERY. Missing district or broken district/province ancestry returns 404 NOT_FOUND (District not found.). National analysts/admins access any district, provincial analysts districts within their stored province, and district analysts their assigned district only. Otherwise return 403 FORBIDDEN (The district is outside your permitted jurisdiction.). Authorize before installation/history queries, calculations or validators.
-
-Return exactly districtId, asOf, freshInstallationCount, staleInstallationCount, currentPowerKw, todayEnergyKwh and incompleteEnergyInstallationCount. asOf is captured once per request and displayed as `08 Oct 2026, 12:00 PM (Sri Lanka)` using the existing Asia/Colombo readable timestamp formatter. This is display text, not an ISO date-time; calculations retain full millisecond precision. Resolve geography, installations/status and readings in one snapshot. Select latest measurements by recordedAt at or before asOf, never receivedAt; active-installation readings are fresh if recordedAt >= asOf minus 30 minutes (inclusive). Other active installations, including those with no eligible readings, count as stale. Inactive installations contribute no current power or fresh/stale counts.
-
-**todayEnergyKwh is observed daily energy that may be incomplete.** Per active or inactive installation, use ordered readings from Asia/Colombo midnight through asOf inclusive. Sum nonnegative consecutive cumulative energyKwh differences. Skip each decrease and resume from its lower counter. Use an exact midnight reading as the baseline if present; otherwise start at the first in-day reading. Never use a pre-midnight baseline, interpolate, extrapolate or estimate missing intervals. Missing midnight baseline, fewer than two daily samples or any decrease makes that installation incomplete; count it once regardless of how many reasons apply, retaining its observed positive contributions. Completeness does not guarantee continuous coverage or energy up to asOf; no sampling-cadence rule is inferred. An authorized district without installations returns 200 with zero totals/counts. An installation without daily readings has zero energy and counts as incomplete; if active without a fresh eligible reading it also counts as stale.
-
-Use private, no-cache and a strong ETag covering the current principal and complete response including asOf. Recalculate at the captured time before conditional handling; freshness expiry and midnight must change the response/validator as appropriate. The ETag changes when the displayed asOf minute or any summary value changes. Sub-minute freshness expiry is still reflected through changed calculated values. A matching strong/weak tag, tag-list member or * returns bodyless 304 only after access and rate-limit checks. Omit Last-Modified; If-Modified-Since alone returns 200. Errors use the standard schema, no-store and no validators; 429 includes Retry-After.
-
 ## Resource and query rules
 
-- Use `/api/v1.0` as the common base path, lowercase hyphenated segments, plural collection nouns, and IDs after collection names. Nest collections under their parent. The district summary is a top-level, verb-named processing function.
-- GET is safe. A device POSTs to its installation's readings collection; the created resource has a retrievable `Location`. Readings remain append-only.
-- Only admins may POST `/installations`, PATCH `/installations/{installationId}` with exactly `{ "status": "inactive" }`, or DELETE `/installations/{installationId}` when it has no readings. PATCH is an idempotent status update, not deletion, and preserves identity and history. DELETE takes no body, returns bodyless 204 on success, 409 if readings exist, and 404 if absent. Enforce the deletion guard atomically with ingestion as described in `architecture.md`. Expose no general update, reactivation, or PUT.
-- Support JSON only for representations. Use `Content-Type: application/json` for JSON bodies; respect `Accept: application/json` and `*/*`. A bodyless DELETE request requires no Content-Type.
-- Filter before sorting and paging. History accepts `from` (inclusive), `to` (exclusive), and `sort=timestamp|-timestamp` (default `-timestamp`); order readings by `recordedAt` with `publicId` as a stable tie-breaker. Paging uses `offset` (default 0) and `limit` (default 50, max 200). Regional lists accept `provinceId`, `districtId`, and `substationId`; reject conflicting ancestry.
-- List responses use `{ "count": 0, "next": null, "previous": null, "items": [] }`, with the count calculated after authorization/filters and before paging. Links retain filters.
-- Latest-reading GET returns 404 when the installation has no readings.
-- Otherwise valid device credentials/tokens for an inactive installation return 403 on token issuance or ingestion. A device token whose installation has been deleted fails current-principal verification with 401.
+- Use `/api/v1.0`, lowercase hyphenated segments, plural collections and public UUID IDs; nest children under parents. The verb-named district summary is a processing function. GET is safe; readings are append-only. No general update/PUT or user-management routes. Design targets Richardson Level 2.
+- Representations are JSON; honor Accept application/json and */*. Writes with bodies require application/json. Bodyless DELETE needs no Content-Type. Standard parser/negotiation rules apply throughout.
+- Path UUID v4 errors use 400 INVALID_REQUEST; query errors use 400 INVALID_QUERY. Documented query fields are single-valued; reject unknown/repeated fields. Installation write UUIDs must be lowercase. Every endpoint without documented query parameters rejects all supplied options with 400 INVALID_QUERY (`This endpoint does not accept query parameters.`), including public endpoints, token exchanges and writes. Query errors use no-store without ETag/Last-Modified; query strings cannot override body fields or HTTP precondition headers.
+- Paging: offset is a nonnegative safe integer (default 0); limit is 1–200 (default 50); their sum must be safe. Filter before sort/page. Paginated envelopes are `{ "count": 0, "next": null, "previous": null, "items": [] }`; count is all authorized matches before paging. Links preserve filters/effective limit and configured prefix, changing offset. Beyond-end offsets retain count, empty items and next=null. Full nested lists return only count/items, count=items.length. Authorized empty lists return 200.
+- History uses from inclusive/to exclusive and requires from < to when both exist; timestamps follow [submission validation](#device-reading-submission). Encode positive-offset `+` as `%2B`. sort=timestamp|-timestamp (default -timestamp) orders recordedAt/publicId in the same direction. Geography filters are provinceId/districtId/substationId UUID v4 strings.
+
+## Authentication and access
+
+All protected GETs require current user JWT authentication; installation actors are rejected. Missing/malformed/invalid/expired/wrong-actor tokens, deleted users or invalid stored assignments return 401 UNAUTHORIZED, `WWW-Authenticate: Bearer`, and `A valid user bearer token is required.` Database errors are sanitized 500. Use current stored role/jurisdiction, ignoring stale JWT authorization claims.
+
+National analysts/admins read nationally; provincial analysts within their stored province; district analysts within their stored district. District analysts may navigate their parent province but never see sibling district data/counts. Complete ancestry is required. Inactive installation history remains readable. Authorization precedes data, counts, composites, summaries and validators; [architecture](architecture.md#security) defines enforcement.
+
+Atomic resources outside jurisdiction return 403 FORBIDDEN; missing resources/ancestry or parent-child mismatches return 404 NOT_FOUND. Geography detail errors are `Province not found.`, `District not found.` or `Substation not found.`; forbidden messages are `The province/district/substation is outside your permitted jurisdiction.` (use the applicable noun). Installation errors are `Installation not found.` and `The installation is outside your permitted jurisdiction.` Reading-specific 404 exceptions appear below. Broken assigned district ancestry yields 403 for an existing requested province.
+
+Explicit regional installation/reading filters: missing geography/ancestry 404, outside jurisdiction 403; authorize each filter before contradictory authorized relationships return 400 INVALID_QUERY. Missing implicit geography yields an empty scope. A parent province filter never broadens district scope.
+
+## Rate limits
+
+[Architecture](architecture.md#rate-limits) owns shared counter storage, thresholds and keys. All protected user/admin GETs consume the shared 120/minute User budget before conditional responses. Login consumes 5 attempts/15 minutes per IP and normalized email/exact meter ID after validation but before credential verification/lookup; invalid bodies or query parameters do not count. Device ingestion consumes 30/minute per installation and IP after authentication/ownership/body/query validation; duplicates count. Admin writes share 30/minute per admin after authorization/path/body/query validation; missing targets, duplicate meters, malformed/stale preconditions, no-ops and history conflicts count.
+
+Exhaustion returns 429 RATE_LIMIT_EXCEEDED with integer Retry-After seconds. Counter failures fail closed. Do not replace shared limits with per-process limits.
 
 ## Caching and access
 
-- Generate stable `ETag` values for exact representations. Send `Last-Modified` only when a reliable change time exists.
-- On conditional GET, check `If-None-Match` before `If-Modified-Since`. A match returns bodyless 304. Use private caching for scoped data. List/composite validators must reflect jurisdiction-scoped representations; an individual immutable reading uses its exact public representation validator only after current access is verified.
-- Admin PATCH/DELETE `/installations/{installationId}` optionally accept `If-Match`. Compare against the current strong ETag from the installation detail GET (not overview/history/list validators), atomically with the mutation. Absent header preserves existing behavior; no 428 requirement. Accept a quoted entity-tag list (any strong match succeeds) or `*` for an existing installation; weak tags never match, and malformed syntax returns 400. An existing installation with no match returns JSON 412 `PRECONDITION_FAILED` without change, even if PATCH would be a no-op. Authenticate, authorize, validate, and preserve missing-resource 404 before evaluating the precondition; for existing DELETE targets, evaluate If-Match before the no-readings guard (mismatch 412; match with readings 409). On success, PATCH returns the resulting strong ETag (unchanged for a no-op); DELETE remains bodyless 204 without resource validators. See `architecture.md` for atomicity.
-- Return 403 for an authenticated analyst requesting an atomic resource outside their stored jurisdiction, or another forbidden action. Return 404 for missing resources or parent/child identity mismatches. Scoped collection behavior remains unchanged.
-- Use HTTPS and signed JWT bearer tokens. Resolve device ownership, stored role/jurisdiction, and current installation status using the [architecture security rules](architecture.md#security). Authenticate and authorize before processing conditional requests; validators cannot bypass read authorization.
-- Keep OpenAPI aligned with the actual routes, schemas, query parameters, authentication, statuses, and headers. The resource and HTTP method design targets Richardson Level 2.
+Protected GETs use Cache-Control: private, no-cache and stable strong ETags after current authentication, rate limiting and authorization. Errors use no-store without validators or data/counts. Bodyless 304 retains applicable cache/validator headers and omits Content-Type.
+
+If-None-Match takes precedence whenever present: strong/weak tags, matching list members or * can match; a nonmatch gives 200 even if If-Modified-Since would match. Only individual/latest readings have reliable Last-Modified, derived from selected immutable receivedAt; without If-None-Match, a date at/after it yields 304, earlier/invalid dates 200, at whole-second resolution. Other protected GETs omit Last-Modified and ignore If-Modified-Since alone.
+
+Scoped ETags cover current principal and complete public response; collections additionally include parent identity/effective query/count/links. Overview covers the entire composite; summary covers displayed asOf and calculated values. Exceptions: immutable readings hash their exact public representation shared by POST/GET; installation detail hashes only canonical public installation fields shared by GET/POST/PATCH, independent of reader. Geography names/history/credentials/internal metadata cannot change an unchanged installation-detail tag. Use detail ETags for admin writes, never list/overview tags.
+
+Admin PATCH/DELETE optional If-Match compares atomically against the current strong detail ETag. Absence is unconditional (no 428); sole * or any matching strong tag in a quoted list succeeds; weak tags never match. Malformed syntax: 400 INVALID_REQUEST; no match: JSON 412 PRECONDITION_FAILED without change, including no-op PATCH. Resolve missing-resource 404 before parsing/comparing the header; DELETE compares before its readings guard (412 before 409). Conflict retries reload/re-evaluate; [architecture](architecture.md#admin-installation-management) owns atomicity. PATCH returns the committed ETag, unchanged for a no-op; DELETE has no validators.
+
+## User token exchange
+
+POST `/auth/user-tokens` accepts exactly email/password strings. Trim/lowercase a valid email; password must be non-whitespace, preserving its exact characters. Missing/unknown fields, arrays, invalid types/empty values: 400 INVALID_REQUEST; malformed JSON: INVALID_JSON; wrong media: 415 UNSUPPORTED_MEDIA_TYPE.
+
+200 returns `{ "access_token": "<JWT>", "token_type": "Bearer", "expires_in": 900, "userId": "<UUID>" }`; expiry is configured seconds, userId equals stored public UUID/JWT sub for both roles. No refresh token. All responses use no-store and Pragma: no-cache; no success validators. Unknown user/password mismatch: identical 401 INVALID_CREDENTIALS, `Invalid email or password.`, Bearer challenge. Unexpected persistence/signing failures: sanitized 500.
+
+## Device token exchange
+
+POST `/auth/device-tokens` accepts exactly nonempty/non-whitespace meterId/deviceSecret strings, preserving both exactly. Invalid shape: 400 INVALID_REQUEST, `Provide only a nonempty meterId and deviceSecret.` Parser/media/negotiation/no-store/Pragma and success fields follow user login, replacing userId with installationId=stored UUID/sub.
+
+Unknown meter/secret mismatch: identical 401 INVALID_CREDENTIALS, `Invalid meter ID or device secret.`, Bearer challenge. Check credentials first; valid inactive credentials: 403 INSTALLATION_INACTIVE, `Inactive installations cannot obtain device tokens.` No token on failure. Login counter namespaces are separate from user login.
+
+## Installation JWT verification and ownership
+
+Missing/malformed/invalid/expired/wrong-actor JWT, deleted installation or invalid principal: 401 UNAUTHORIZED with Bearer challenge, `A valid installation bearer token is required.` Installation actors without exact installation-write scope: 403 FORBIDDEN, `The token does not permit installation writes.` Current inactive status: 403 INSTALLATION_INACTIVE, `Inactive installations cannot authenticate for writes.` URL mismatch: 403 FORBIDDEN, `The authenticated installation cannot access this installation.` Missing authenticated context uses the same installation 401. [Architecture](architecture.md#verified-installations-and-ownership) owns cryptographic/current-state checks.
+
+## Device reading submission
+
+POST `/installations/{installationId}/readings` requires the bound active device, using the verification/ownership rules above. User/admin tokens: 401; inactive/insufficient scope/mismatch: 403; deletion winning concurrent insertion: 401.
+
+Accept exactly recordedAt/powerKw/energyKwh/voltageV. Measurements are finite nonnegative JSON numbers without coercion. Missing/unknown fields (including identity/binding/receipt fields): 400 INVALID_REQUEST. Timestamp must be calendar-valid ISO `YYYY-MM-DDTHH:mm:ss[.SSS]Z` or explicit +/-HH:mm offset, with 1–3 fractional digits if present. Reject missing zone, overflow, leap seconds and sub-millisecond precision. Clock-drift/age/upper measurement bounds remain unresolved and unenforced.
+
+Duplicate installation/timestamp: 409 DUPLICATE_READING without overwrite. Return 201 with id, installationId, recordedAt/receivedAt and their Display fields, powerKw/energyKwh/voltageV; strong ETag, receipt-based Last-Modified and prefix-aware Location `/installations/{installationId}/readings/{readingId}`. Location GET requires an authorized user/admin. All submission responses use no-store. [Architecture](architecture.md#reading-ingestion) owns server identity, timestamps and transaction coordination.
+
+## Protected province list
+
+GET `/provinces`: complete jurisdiction-scoped `{count, items}` with id/name items sorted name/publicId ascending. Count equals items.length; omit next/previous. National/admin users see all provinces, provincial users their assigned province, district users their assigned district's parent province. Missing/broken assigned ancestry gives 200 with count=0 and items=[]. Accept no query parameters: geography filters, offset/limit and any other options return 400 INVALID_QUERY. Resolve scope/list in one read-only snapshot; apply shared authentication/read limits before query validation and private scoped ETags/conditional 304. Errors use no-store without validators; omit Last-Modified.
+
+## Province details
+
+GET `/provinces/{provinceId}`: only id/name, no queries/related collections. National/admin any province, provincial own, district current parent province; use shared access/cache rules.
+
+## Province districts
+
+GET `/provinces/{provinceId}/districts`: full count/items, no queries/paging links, name/publicId ascending. Items have id/provinceId/name. National/admin and own-province provincial analysts receive the province's districts; district analysts only their assigned district in its parent province. Authorize parent before child queries/count/validators.
+
+## District details
+
+GET `/districts/{districtId}`: only id/provinceId/name, no queries/related collections; shared district access/cache rules.
+
+## District grid substations
+
+GET `/districts/{districtId}/grid-substations`: full count/items, no queries/paging links, name/publicId ascending. Items have id/districtId/name and belong to the authorized URL district.
+
+## Grid substation details
+
+GET `/grid-substations/{substationId}`: only id/districtId/name without related collections; shared substation access/cache rules. Supplied query parameters return 400 INVALID_QUERY.
+
+## Individual reading
+
+GET `/installations/{installationId}/readings/{readingId}`: validate both UUIDs, authorize installation before reading lookup (even if reading is absent). Missing installation/ancestry/reading or binding mismatch: 404 NOT_FOUND, `Reading not found.` Return the same reading representation/ETag as POST with receipt-based Last-Modified; shared conditional rules apply.
+
+## Latest reading
+
+GET `/installations/{installationId}/last-reading`: authorize before lookup, including empty history. Missing installation/ancestry or no readings: 404 NOT_FOUND, `Reading not found.` Select greatest recordedAt/publicId, never receipt order; reuse individual-reading fields/validators. Delayed older readings leave selection unchanged; newer measurements change ETag. Last-Modified describes the selected receipt, not history/installation; ETag distinguishes same-second changes. No filtering/pagination.
+
+## Installation list
+
+GET `/installations`: geography filters, optional single-valued status=active|inactive and offset/limit; fixed public UUID ascending order. Omission includes both statuses. Invalid, empty, differently cased or repeated status values return 400 INVALID_QUERY. Apply geography/jurisdiction and status before count/page; paging links preserve status and ETags include the effective query. Items contain id/substationId/meterId/status in paginated envelopes. Reject sort/time filters. Explicit regional-filter errors and shared scoped cache rules apply. Read authorized ancestry/count/page in one snapshot; collection ETag differs from the detail write validator.
+
+## Substation installation list
+
+GET `/grid-substations/{substationId}/installations`: authorize complete substation ancestry first; missing/forbidden parent uses geography errors. Full count/items, both statuses, public UUID ascending, no queries/paging links. Items use installation fields and URL parent. ETag includes principal/parent/full collection, including empty results.
+
+## Installation details
+
+GET `/installations/{installationId}`: only id/substationId/meterId/status for either status, without related collections. Use shared installation access and canonical detail ETag rules.
+
+## Installation overview
+
+GET `/installations/{installationId}/overview`: shared installation access. Return `{installation, geography: {province, district, gridSubstation}, latestReading}` using the public detail schemas. latestReading is the public reading with greatest recordedAt/publicId or null. Both statuses; no history/counts/paging. Complete composite/current principal determines ETag; public status/geography/latest changes affect it, delayed older readings do not. No reliable whole-composite Last-Modified.
+
+## Installation reading history
+
+GET `/installations/{installationId}/readings`: shared installation access, including inactive history. Accept offset/limit/from/to/sort only. Reading items/paginated envelope follow shared query rules; links preserve time filters/effective sort/limit. Authorize before count/page; read ancestry/count/page in one snapshot. Empty history/time windows are 200, not 404. Whole-envelope ETag includes principal, installation and effective query; no collection Last-Modified.
+
+## Regional reading history
+
+GET `/readings`: installation-history parameters plus geography filters, retaining inactive history and applying explicit regional-filter errors. Without filters, scope follows stored jurisdiction. Read ancestry/count/page in one snapshot. Same reading envelope/order/cache rules; links preserve geography/time filters/effective sort/limit.
+
+## District generation summary
+
+GET `/summarize-district-generation?districtId=...`: exactly one required districtId UUID v4; missing/invalid/repeated/other queries: 400 INVALID_QUERY. Shared district access/errors apply before queries/calculations/validators.
+
+Return exactly districtId, asOf, freshInstallationCount, staleInstallationCount, currentPowerKw, todayEnergyKwh and incompleteEnergyInstallationCount. Capture asOf once per request; display it as `08 Oct 2026, 12:00 PM (Sri Lanka)` while retaining full millisecond precision for calculations. Read geography/status/readings in one snapshot. Active installations' latest recordedAt <= asOf is fresh if >= asOf minus 30 minutes inclusive; otherwise stale, including absent eligible readings. Sum power only for fresh active installations. Inactive sites contribute no power/fresh/stale counts.
+
+todayEnergyKwh is observed daily energy that may be incomplete. For each active/inactive installation, order readings from Asia/Colombo midnight through asOf inclusive; sum nonnegative consecutive counter differences, skipping decreases and resuming from the lower counter. Use exact midnight baseline if available, otherwise the first in-day reading. Never use pre-midnight readings, assume zero resets, interpolate, extrapolate or estimate. Count an installation incomplete once if fewer than two daily samples, no exact midnight baseline or any decrease; retain usable observed contributions. Completeness guarantees neither continuous sampling nor energy up to asOf. No installations: zero totals/counts; no daily readings: zero energy/incomplete (also stale if active without fresh eligible reading).
+
+Recalculate before conditional handling. ETag includes current principal and complete response, changing with displayed asOf minute or any value; sub-minute freshness expiry changes values at full precision. Time/midnight can change validators without ingestion. Shared private cache/304 rules apply; no Last-Modified.
+
+## Installation creation
+
+POST `/installations`: current stored admin required (user authentication failures 401, non-admin 403). Exactly substationId/meterId/deviceSecret strings; lowercase UUID v4 parent (missing: 404). Non-whitespace meter/secret; trim meter, preserve secret exactly. Reject client IDs/status/hashes/other fields or types: 400 INVALID_REQUEST. No extra complexity/length policy beyond 100 KB parser. Independent provisioning secret; duplicates including inactive meters/concurrent inserts: 409 DUPLICATE_METER_ID.
+
+201 returns only id/substationId/meterId/status=active, canonical detail ETag and prefix-aware Location `/installations/{id}`; no Last-Modified. All responses no-store; never log/return credentials. Shared admin budget applies.
+
+## Installation status updates
+
+PATCH `/installations/{installationId}`: same current-admin access/budget as creation; lowercase UUID v4 and exactly `{"status":"active"}` or `{"status":"inactive"}`. Missing/empty body, other values/fields: 400 INVALID_REQUEST. Missing target: 404 NOT_FOUND (`Installation not found.`). Optional If-Match uses shared atomic rules, including stale no-op rejection.
+
+200 returns only id/substationId/meterId/status and resulting detail ETag. Repeat current status: identical body/tag; preserve identity/credentials/ancestry/history/meter reservation. All responses no-store; no Last-Modified/error validators. Inactive blocks login/ingestion indefinitely, including old unexpired tokens. Explicit reactivation restores unchanged credentials and tokens only until original expiry; expired tokens stay 401. Admin access follows current stored role even for old permission claims. Lifecycle transactions serialize with ingestion.
+
+## Installation deletion
+
+DELETE `/installations/{installationId}`: same current-admin access/shared budget; lowercase UUID v4. Reject every body, including JSON `{}`/`[]`, non-JSON/chunked payloads: 400 INVALID_REQUEST. Empty requests need no Content-Type; Content-Length: 0 allowed; shared parser/size/negotiation errors still apply.
+
+Resolve target 404 before optional If-Match parsing/comparison; evaluate precondition before any history guard. Stale with history: 412; matching/wildcard/absent header with history: 409 INSTALLATION_HAS_READINGS. Delete only active/inactive installations with no readings at any timestamp; never cascade. [Shared parent-write transaction](architecture.md#admin-installation-management) prevents orphan readings and retries all checks.
+
+204 has no body/Content-Type/ETag/Last-Modified; all responses no-store, errors standard schema without validators. Repeat/missing target: 404. Old installation tokens fail 401, including against a newly registered replacement meter with a new UUID. Meter uniqueness is released only for the removed empty installation.

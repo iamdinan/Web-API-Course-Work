@@ -2,11 +2,11 @@
 
 Student Index: COBSCCOMP251P-004
 
-A Node.js/Express API backed by Mongoose and MongoDB Atlas for solar generation data in Sri Lanka.
+Node.js/Express, Mongoose and MongoDB Atlas API for Sri Lankan solar generation data.
 
 ## Current implementation
 
-The application currently provides public `/health` and `/openapi.json`, user/admin login at `POST /auth/user-tokens`, device login at `POST /auth/device-tokens`, protected `GET /provinces`, `GET /readings`, `GET /installations/{installationId}/readings`, `GET /installations/{installationId}/readings/{readingId}`, `GET /installations/{installationId}/last-reading`, `GET /installations/{installationId}/overview`, `GET /installations/{installationId}`, `GET /installations`, `GET /grid-substations/{substationId}`, `GET /districts/{districtId}/grid-substations`, `GET /districts/{districtId}`, `GET /provinces/{provinceId}/districts`, `GET /provinces/{provinceId}`, `GET /summarize-district-generation`, and `GET /grid-substations/{substationId}/installations`, six data models, the full dataset seed, and controlled user seeding. Login and protected reads use shared MongoDB limits. Installation JWT verification and URL ownership protect `POST /installations/{installationId}/readings`, with transactional active-status checks and shared device-write limits. Remaining resource endpoints, Swagger UI, database readiness, and other traffic limits remain planned. The architecture describes the target API; OpenAPI describes implemented routes only.
+Implemented routes are listed under [API endpoints](#api-endpoints) and in [OpenAPI](docs/openapi.json). They include user/device authentication, jurisdiction-scoped geography and installation reads, reading ingestion/history, district summaries, and admin installation creation/status updates/guarded deletion. Shared MongoDB limits cover login, protected reads, device ingestion and admin writes; PATCH/DELETE support atomic optional If-Match. Swagger UI (`/docs`), database readiness and public/backstop limits remain planned. [Architecture](docs/architecture.md#resource-surface) describes the target surface.
 
 ## Getting started
 
@@ -43,70 +43,31 @@ Startup connects to MongoDB before opening the HTTP listener. Watch for `MongoDB
 | `npm run seed` | Insert the full sample dataset into the configured database |
 | `npm run seed:users` | Insert and verify the 36 configured accounts without changing existing users |
 
-## Substation installation list manual checks
-
-Use a user/admin token and a real public substation UUID. This endpoint returns all installations in count/items, with no pagination or query parameters. The [nested installation contract](docs/API_DESIGN_RULES.md#substation-installation-list) defines jurisdiction, fields and conditional behavior.
-
-```powershell
-$listUrl = "$base/api/v1.0/grid-substations/$substationId/installations"
-$response = Invoke-WebRequest $listUrl -Headers @{ Authorization = "Bearer $userToken" }
-$response.Content # count/items; public fields only
-curl.exe -i $listUrl -H "Authorization: Bearer $userToken" -H 'If-None-Match: *' # bodyless 304
-```
-
-Verify count matches the full items array, with active/inactive records and no next/previous fields. National/admin and authorized provincial/district tokens return 200; outside jurisdiction returns 403, installation tokens 401, malformed substation UUID 400 and unused valid UUID 404. All query parameters, including offset/limit, geography and sort/status, return 400. Empty authorized substations return count=0 and empty items. Matching a saved ETag returns 304 until the authorized collection changes. If-Modified-Since alone returns 200.
-
-## District summary manual checks
-
-Send a user/admin token and a real public district UUID. See the [summary HTTP contract](docs/API_DESIGN_RULES.md#district-generation-summary). todayEnergyKwh is observed daily energy that may be incomplete; inspect incompleteEnergyInstallationCount. Inactive history contributes energy, while only active fresh readings contribute current power.
-
-```powershell
-$summaryUrl = "$base/api/v1.0/summarize-district-generation?districtId=$districtId"
-$response = Invoke-WebRequest $summaryUrl -Headers @{ Authorization = "Bearer $userToken" }
-$response.Content
-curl.exe -i $summaryUrl -H "Authorization: Bearer $userToken" -H 'If-None-Match: *'
-```
-
-The first request returns 200 with the seven public summary fields. The wildcard conditional request returns bodyless 304 after authorization; a saved specific ETag returns 200 when the displayed asOf minute or any calculated value changes. asOf uses readable Sri Lanka text, such as `08 Oct 2026, 12:00 PM (Sri Lanka)`, while calculations retain full precision. National/admin and authorized provincial/district tokens return 200; outside jurisdiction returns 403, an installation token 401, missing/invalid districtId 400, an unused valid district UUID 404, and unsupported or repeated query parameters 400. An empty district returns zero totals/counts. If-Modified-Since alone returns 200. Tests use controlled clocks to verify exact freshness and midnight boundaries; the fixed seed's historical dates may produce stale power on current dates.
-
 ## API endpoints
 
-Append the paths below to your API base URL. Use your deployed HTTPS host with the configured prefix, for example `https://<your-host>/api/v1.0`. If the app runs locally, use `http://localhost:3000/api/v1.0` (adjust the port or prefix if configured).
+Append these paths to `http://localhost:3000/api/v1.0` locally or `https://<your-host>/api/v1.0` in deployment; adjust the configured port/prefix. Protected GETs use user/admin bearer tokens; reading POST uses the bound device token; installation writes require a current database admin.
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/health` | Application liveness |
-| GET | `/openapi.json` | Implemented OpenAPI specification |
-| POST | `/auth/user-tokens` | Obtain a user/admin access token |
-| POST | `/auth/device-tokens` | Obtain an installation access token |
-| GET | `/provinces` | List provinces visible to the authenticated user |
-| GET | `/summarize-district-generation?districtId=...` | Current fresh power and observed daily energy within an authorized district |
-| GET | `/provinces/{provinceId}` | Retrieve public province details within the user's jurisdiction |
-| GET | `/provinces/{provinceId}/districts` | List authorized districts within a province |
-| GET | `/districts/{districtId}` | Retrieve public district details within the user's jurisdiction |
-| GET | `/grid-substations/{substationId}/installations` | List all active and inactive installations within an authorized substation |
-| GET | `/grid-substations/{substationId}` | Retrieve public substation details within the user's jurisdiction |
-| GET | `/districts/{districtId}/grid-substations` | List all substations belonging to an authorized district |
-| POST | `/installations/{installationId}/readings` | Submit a reading for the authenticated active installation |
-| GET | `/installations/{installationId}/readings` | Page/filter reading history within the authenticated user's jurisdiction |
-| GET | `/readings` | Page/filter regional reading history within the authenticated user's jurisdiction |
-| GET | `/installations/{installationId}/readings/{readingId}` | Retrieve a reading within the authenticated user's jurisdiction |
-| GET | `/installations/{installationId}/last-reading` | Retrieve the latest measurement within the authenticated user's jurisdiction |
-| GET | `/installations/{installationId}/overview` | Retrieve installation details, geography and latest reading within the user's jurisdiction |
-| GET | `/installations/{installationId}` | Retrieve public installation metadata within the user's jurisdiction |
-| GET | `/installations` | Page/filter public installations within the user's jurisdiction |
+| Method | Path |
+| --- | --- |
+| GET | `/health`, `/openapi.json` (public) |
+| POST | `/auth/user-tokens`, `/auth/device-tokens` (credential exchange) |
+| GET | `/provinces`, `/provinces/{provinceId}`, `/provinces/{provinceId}/districts` |
+| GET | `/districts/{districtId}`, `/districts/{districtId}/grid-substations` |
+| GET | `/grid-substations/{substationId}`, `/grid-substations/{substationId}/installations` |
+| GET, POST | `/installations` |
+| GET, PATCH, DELETE | `/installations/{installationId}` |
+| GET | `/installations/{installationId}/overview`, `/installations/{installationId}/last-reading` |
+| GET, POST | `/installations/{installationId}/readings` |
+| GET | `/installations/{installationId}/readings/{readingId}`, `/readings` |
+| GET | `/summarize-district-generation?districtId=...` |
 
-Health does not query MongoDB. For a manual startup check, confirm the connection message and request the health path.
+See [HTTP rules](docs/API_DESIGN_RULES.md) for parameters, access failures, fields and caching, and OpenAPI for machine-readable schemas. Health checks liveness without querying MongoDB; check the startup connection message separately.
 
 ## Sample data
 
-The seed creates 9 provinces, 25 districts, 25 synthetic substations, 220 installations, and 147,840 readings. Reruns insert missing data while preserving existing records. This dataset command does not provision users or admin accounts; use the separate user seed below.
+Run `npm run seed` with `MONGODB_URI` and `DEVICE_HASH_COMMON_PREFIX` configured in ignored `.env`. MongoDB must support transactions (Atlas does). The command builds indexes, inserts missing fixtures, prints collection totals including unrelated records, and disconnects; it never clears data or provisions users.
 
-Run `npm run seed` after configuring `MONGODB_URI`. The database must support transactions, as Atlas does. The command builds declared indexes, inserts missing data, prints collection totals (including unrelated records), and disconnects. It never clears the database.
-
-For development, set `DEVICE_HASH_COMMON_PREFIX` in the ignored `.env`. A new installation's password is the exact prefix followed by its stored meter ID; the seed stores only a fresh salted scrypt hash. Reruns preserve existing credentials, so changing the prefix does not rotate stored hashes. Production devices must use independent credentials.
-
-See the [architecture seed section](docs/architecture.md#seed-dataset-and-persistence) for profiles, dates, persistence, and rerun guarantees.
+The dataset contains 9 provinces, 25 districts, 25 synthetic substations, 220 installations and 147,840 readings. [Architecture](docs/architecture.md#seed-dataset-and-persistence) owns profiles, dates and rerun guarantees. A new seeded device secret is the exact private prefix followed by its meter ID. Reruns preserve credentials; changing the prefix does not rotate hashes. Production devices need independent secrets.
 
 ## User accounts
 
@@ -131,111 +92,84 @@ All 36 credential pairs and existing geography references are required on every 
 
 The command verifies all configured accounts before committing its transaction and prints aggregate inserted/preserved/verified counts and actual role/scope totals. Existing assignments that differ from the seed plan are reported by count and preserved. Passwords and hashes are never printed. Run the command again to verify a zero-insert rerun; see [architecture](docs/architecture.md#user-seeding) for the persistence contract.
 
-## User login
+## API usage
 
-POST JSON containing only `email` and `password` to `/auth/user-tokens`. The response includes the authenticated public `userId`. Save the returned `access_token` and send it as `Authorization: Bearer <access_token>` on user requests. See the [user-token contract](docs/API_DESIGN_RULES.md#user-token-exchange) and [OpenAPI](docs/openapi.json) for responses and limits.
-
-## Device login
-
-POST JSON containing only `meterId` and `deviceSecret` to `/auth/device-tokens`. Submit the original secret; for the development seed it is the configured prefix followed by the meter ID. Save the returned installation `access_token` and public `installationId` for reading submissions. See the [device-token contract](docs/API_DESIGN_RULES.md#device-token-exchange) for responses and limits.
-
-## Protected province list
-
-Send the user/admin bearer token to GET `/provinces`. Results follow the user's stored national, provincial, or district jurisdiction. See the [province-list contract](docs/API_DESIGN_RULES.md#protected-province-list) for filters, pagination, validators, and limits.
-
-## List a province's districts
-
-Send a user/admin bearer token to GET `/provinces/{provinceId}` for only id/name. National/admin readers can request any province, provincial readers their assigned province, and district readers their current district's parent province. No query options or related collections. See the [province-detail contract](docs/API_DESIGN_RULES.md#province-details).
-
-Manual check (PowerShell; use your HTTPS base URL, real public province UUID and user token):
-
-```powershell
-$provinceUrl = "$base/api/v1.0/provinces/$provinceId"
-$response = Invoke-WebRequest $provinceUrl -Headers @{ Authorization = "Bearer $userToken" }
-$response.Content # 200: only id and name
-curl.exe -i $provinceUrl -H "Authorization: Bearer $userToken" -H "If-None-Match: $($response.Headers.ETag)" # 304, no body
-```
-
-Repeat with national/admin, own-province provincial and own-parent-province district tokens for 200; an outside province for a scoped analyst gives 403. An installation token gives 401, `not-a-uuid` gives 400, an unused valid UUID gives 404, and `?limit=1` gives 400. If-Modified-Since alone gives 200. Errors carry no-store and no validators.
-
-Send a user/admin bearer token to GET `/provinces/{provinceId}/districts`. National/admin and provincial readers receive the authorized province's districts; district analysts receive only their assigned district in their own province. Returns the full count/items collection without query options or pagination. See the [province-district contract](docs/API_DESIGN_RULES.md#province-districts).
-
-## Read a district
-
-Send a user/admin bearer token to GET `/districts/{districtId}`, using the public district UUID. Returns id, provinceId and name within the user's stored jurisdiction, without related collections or query options. See the [district-detail contract](docs/API_DESIGN_RULES.md#district-details).
-
-## Read a grid substation
-
-Send a user/admin bearer token to GET `/grid-substations/{substationId}`, using the public substation UUID. The response includes id, districtId and name within the user's stored jurisdiction. See the [substation-detail contract](docs/API_DESIGN_RULES.md#grid-substation-details) for access, validators and errors.
-
-## List a district's grid substations
-
-Send a user/admin bearer token to GET `/districts/{districtId}/grid-substations`, using the public district UUID. The district must be within the user's stored jurisdiction. Returns the full district collection without pagination or query parameters. See the [district-substation collection contract](docs/API_DESIGN_RULES.md#district-grid-substations).
-
-## Submit a device reading
-
-Send the installation bearer token to POST `/installations/{installationId}/readings`, using the public installation ID returned by device login and a JSON body:
+POST JSON `{"email":"<email>","password":"<password>"}` to `/auth/user-tokens`, or `{"meterId":"<meter>","deviceSecret":"<secret>"}` to `/auth/device-tokens`. Save `access_token` and send `Authorization: Bearer <access_token>`. Device login also returns the public `installationId`; submit readings under that UUID:
 
 ```json
 {"recordedAt":"2026-10-08T12:00:00+05:30","powerKw":3.5,"energyKwh":42,"voltageV":230}
 ```
 
-Use a timestamp not already stored for that installation. Use the returned Location with a user/admin bearer token to retrieve the created reading. See the [reading-submission contract](docs/API_DESIGN_RULES.md#device-reading-submission) for validation, responses, headers, and limits, and the [architecture](docs/architecture.md#reading-ingestion) for persistence coordination.
+Use a previously unused measurement timestamp. Retrieve the returned Location with a jurisdiction-authorized user/admin token. GET `/installations?status=active` or `?status=inactive` narrows installations within the authorized area; omission includes both. It combines with geography filters and pagination. Lists/history accept only their [documented queries](docs/API_DESIGN_RULES.md#resource-and-query-rules); the province list and small nested lists have no pagination. GET `/provinces` accepts no queries and returns only count/items within the current stored jurisdiction. Every endpoint without documented query options rejects supplied parameters with 400 INVALID_QUERY, including public endpoints, login and writes. Summary energy is observed and may be incomplete; check incompleteEnergyInstallationCount. Historical seed dates can produce stale current power.
 
-## Read an individual reading
+## Manual verification
 
-Send the user/admin bearer token to GET `/installations/{installationId}/readings/{readingId}`, using both public UUIDs or the Location returned by submission. Historical readings remain available for inactive installations within the user's jurisdiction. Out-of-jurisdiction requests return 403; missing readings and reading/installation mismatches return 404. See the [individual-reading contract](docs/API_DESIGN_RULES.md#individual-reading) for responses and conditional requests.
+Use a test database and real public UUIDs. Keep provisioning secrets privately. Detailed expected responses live in the HTTP contract; `npm test` includes isolated concurrency checks, which sequential manual requests cannot establish.
 
-## Read the latest measurement
+For protected GETs, exercise national/admin and authorized provincial/district tokens, then outside-jurisdiction, device, invalid and missing tokens. Check malformed/missing UUIDs, unsupported/repeated queries, scoped counts and empty results. Save an ETag and repeat with it or `If-None-Match: *` for bodyless 304. If-Modified-Since alone gives 200 except on individual/latest readings. Errors have no-store and no validators. Example (PowerShell):
 
-Send a user/admin bearer token to GET `/installations/{installationId}/last-reading`. The response is the reading with the greatest recordedAt, including retained inactive history. See the [latest-reading contract](docs/API_DESIGN_RULES.md#latest-reading) for access, empty results and conditional caching.
+```powershell
+$base = 'http://localhost:3000/api/v1.0'
+$url = "$base/provinces/$provinceId"
+$response = Invoke-WebRequest $url -Headers @{ Authorization = "Bearer $userToken" }
+$response.Content
+curl.exe -i $url -H "Authorization: Bearer $userToken" -H "If-None-Match: $($response.Headers.ETag)"
+```
 
-## List installations
+Also verify district users see only their district in the parent province list; substation installation lists include both statuses and count equals all items without paging links. Summaries have seven fields, empty districts have zero totals, and ETags change with displayed asOf minutes or calculated values. Automated clock checks cover freshness/midnight boundaries.
 
-Send a user/admin bearer token to GET `/installations`. Optional provinceId, districtId and substationId filters narrow the authorized area; offset and limit select a page. Both active and inactive installations are included. See the [installation-list contract](docs/API_DESIGN_RULES.md#installation-list) for parameters, collection responses and caching. Installation writes remain unimplemented.
+### Create an installation
 
-## Read installation details
+Use a real substation UUID and admin token:
 
-Send a user/admin bearer token to GET `/installations/{installationId}`. It returns public installation metadata for active or inactive installations within jurisdiction, with a strong installation ETag for conditional GET. See the [installation-detail contract](docs/API_DESIGN_RULES.md#installation-details). Installation writes remain unimplemented.
+```powershell
+$base = 'http://localhost:3000/api/v1.0' # use your deployed HTTPS base in production
+$meterId = 'MANUAL-' + [guid]::NewGuid().ToString()
+$deviceSecret = [guid]::NewGuid().ToString() + [guid]::NewGuid().ToString()
+$inputJson = @{ substationId = $substationId; meterId = $meterId; deviceSecret = $deviceSecret } | ConvertTo-Json
+$created = Invoke-WebRequest "$base/installations" -Method Post -ContentType 'application/json' -Headers @{ Authorization = "Bearer $adminToken" } -Body $inputJson
+$installation = $created.Content | ConvertFrom-Json
+$created.Headers.Location
+$created.Headers.ETag
+$detail = Invoke-WebRequest "$base/installations/$($installation.id)" -Headers @{ Authorization = "Bearer $adminToken" }
+$detail.Headers.ETag -eq $created.Headers.ETag # True
+$loginJson = @{ meterId = $meterId; deviceSecret = $deviceSecret } | ConvertTo-Json
+$deviceLogin = Invoke-RestMethod "$base/auth/device-tokens" -Method Post -ContentType 'application/json' -Body $loginJson
+$deviceLogin.installationId -eq $installation.id # True
+```
 
-## Read an installation overview
+Verify 201, Location, no-store and a detail-compatible ETag. Repeat the meter for 409, use analyst/device tokens for 403/401, invalid/extra fields for 400 and a missing parent for 404.
 
-Send a user/admin bearer token to GET `/installations/{installationId}/overview`. It returns installation details, related geography and the latest measurement, or null when no readings exist. Inactive installations remain available within jurisdiction. See the [overview contract](docs/API_DESIGN_RULES.md#installation-overview) and [architecture response structure](docs/architecture.md#installation-overview).
+### Change installation status
 
-## Read installation history
+In Postman, set baseUrl, adminToken, installationId and a deviceToken issued while active; save the original meterId/deviceSecret privately. GET detail and save its quoted ETag as activeETag.
 
-Send a user/admin bearer token to GET `/installations/{installationId}/readings`. Optional offset, limit, from/to and sort parameters select the page and time window; results default to newest first. See the [history contract](docs/API_DESIGN_RULES.md#installation-reading-history) for validation, pagination and caching.
+1. PATCH with JSON `{"status":"inactive"}` and `If-Match: {{activeETag}}`; save inactiveETag. Verify detail/tag match, history remains and the meter stays reserved (duplicate creation 409).
+2. Repeat with inactiveETag, `*`, no header and a list `"unrelated", {{inactiveETag}}`: unchanged 200/body/tag. Old activeETag or `W/{{inactiveETag}}`: 412; unquoted/trailing-comma headers: 400; missing UUID: 404 even with bad preconditions.
+3. Invalid path/body/status or extra fields: 400; no/invalid/device token: 401; analyst: 403. Correct-secret device login and saved-token ingestion while inactive: 403.
+4. PATCH active with inactiveETag. Original credentials and unexpired device tokens work again until their original expiry; expired tokens remain 401. The original active ETag returns if public fields are unchanged; inactiveETag is now stale. Repeat active requests are unchanged 200. Admin tokens continue to use current stored roles.
 
-For regional history, send a user/admin bearer token to GET `/readings`. Optional provinceId, districtId and substationId filters narrow the authorized area; paging, time filters and sorting follow the [regional history contract](docs/API_DESIGN_RULES.md#regional-reading-history).
+### Delete an empty installation
+
+1. Create an empty fixture, obtain its device token and save detail ETag. DELETE with Body > none and optional matching If-Match; omit Content-Type. Verify 204 with no body/Content-Type/validators and no-store; repeat DELETE/detail: 404.
+2. Use additional fixtures for absent header, `*`, matching tag list and inactive-empty deletion. Stale/weak tags: 412 without change; malformed headers: 400; missing resource: 404 before preconditions. Invalid UUID/body (including `{}`, `[]`, raw text): 400; no/invalid/device token: 401; analyst: 403.
+3. Submit a reading to another fixture. Current/wildcard/absent If-Match: 409 INSTALLATION_HAS_READINGS; stale: 412 first. Repeat while inactive; verify history/detail stay intact.
+4. Old device token against the deleted UUID: 401. Register the same meter again: new UUID; old token fails against both URLs. New login uses the replacement's secret.
+
+In a fresh admin rate window, run 31 valid-shaped PATCH or bodyless DELETE requests for a nonexistent UUID: first 30 return 404, then 429 with Retry-After. Earlier POST/PATCH/DELETE attempts share the budget. See [status](docs/API_DESIGN_RULES.md#installation-status-updates) and [deletion](docs/API_DESIGN_RULES.md#installation-deletion) contracts for complete rules.
 
 ## Project layout
 
-| Path | Responsibility |
-| --- | --- |
-| `src/config/` | Environment configuration and database connection |
-| `src/features/auth/` | User/device token routes, controllers, credential validation, and issuance services |
-| `src/features/readings/` | Reading routes, controllers, validation, public serialization, scoped queries, and transactional ingestion |
-| `src/features/provinces/` | Province routes, controllers, query validation, and scoped queries |
-| `src/features/districts/` | District detail/province collection routes, validation, controllers and authorized ancestry queries |
-| `src/features/grid-substations/` | Substation detail/district collection routes, validation, controllers and authorized ancestry queries |
-| `src/features/health/` | Public liveness route and static response |
-| `src/routes/api.routes.js` | Central API router and OpenAPI endpoint |
-| `src/middleware/` | Shared JWT verification, installation ownership, rate-limit enforcement, and error handling |
-| `src/services/` | Shared password/JWT helpers, current-user principal construction, and MongoDB rate counters |
-| `src/utils/` | Shared HTTP errors and timestamp parsing |
-| `src/models/` | Mongoose schemas and shared model helpers |
-| `src/app.js` | Express application and API router mount |
-| `src/index.js` | Server startup and shutdown |
-| `scripts/` | Seed data generation and persistence |
-| `test/` | Automated checks |
+`src/features/` groups routes, validation, controllers and services by feature; shared configuration, middleware, services, utilities and models live in sibling directories. `src/routes/api.routes.js` composes the API and serves OpenAPI; `src/app.js` mounts it; `src/index.js` handles startup/shutdown. `scripts/` contains seed tooling; `test/` contains automated checks. [Architecture](docs/architecture.md#runtime-and-structure) defines ownership and separation rules.
 
 ## Documentation
 
 | Document | Purpose |
 | --- | --- |
 | [Conceptual data model](docs/data-model-reference.md) | Domain entities and relationships |
-| [Architecture](docs/architecture.md) | Stored data, resource surface, authorization, and persistence design |
-| [API design rules](docs/API_DESIGN_RULES.md) | HTTP methods, queries, response schemas, caching, and preconditions |
-| [Design decisions](docs/decisions.md) | Rationale and unresolved choices |
-| [Prompt log](docs/prompt-log.md) | Historical requests, corrections, and verification records |
-| [AGENTS.md](AGENTS.md) | Instructions and invariants for coding agents |
+| [Architecture](docs/architecture.md) | Stored schemas, target paths, access and persistence |
+| [API design rules](docs/API_DESIGN_RULES.md) | Shared HTTP contract and endpoint exceptions |
+| [OpenAPI](docs/openapi.json) | Implemented operations, schemas, parameters and responses; compact JSON with shared components |
+| [Design decisions](docs/decisions.md) | Rationale and pending choices |
+| [Prompt log](docs/prompt-log.md) | Historical requests, corrections and verification |
+| [AGENTS.md](AGENTS.md) | Coding-agent instructions and invariants |

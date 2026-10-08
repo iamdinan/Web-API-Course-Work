@@ -1,6 +1,6 @@
 const readings = require("./readings.service");
 const { apiBaseUrl } = require("../../config/env");
-const { createHash } = require("node:crypto");
+const { sendPrivateJson } = require("../../utils/response-validators");
 const { sendError } = require("../../utils/http-errors");
 const { installationETag } = require("./readings.serializer");
 
@@ -60,12 +60,11 @@ async function getReadings(req, res) {
     return sendError(res, 403, { code: "FORBIDDEN", message: error.message, details: [] });
   }
   if (!body) return sendError(res, 404, { code: "NOT_FOUND", message: "Installation not found.", details: [] });
-  const tag = createHash("sha256").update(JSON.stringify({
-    user: req.user, installationId: req.params.installationId, query: req.readingQuery, body,
-  })).digest("hex");
   // No reliable collection revision exists for an entire paginated envelope.
   // Express evaluates If-None-Match after all access, query and persistence checks.
-  return res.set({ "Cache-Control": "private, no-cache", ETag: `"${tag}"` }).json(body);
+  return sendPrivateJson(res, body, {
+    user: req.user, installationId: req.params.installationId, query: req.readingQuery, body,
+  });
 }
 
 async function getOverview(req, res) {
@@ -77,9 +76,8 @@ async function getOverview(req, res) {
     return sendError(res, 403, { code: "FORBIDDEN", message: error.message, details: [] });
   }
   if (!body) return sendError(res, 404, { code: "NOT_FOUND", message: "Installation not found.", details: [] });
-  const tag = createHash("sha256").update(JSON.stringify({ user: req.user, body })).digest("hex");
   // No timestamp reliably covers installation, geography and latest reading.
-  return res.set({ "Cache-Control": "private, no-cache", ETag: `"${tag}"` }).json(body);
+  return sendPrivateJson(res, body, { user: req.user, body });
 }
 
 async function getInstallation(req, res) {
@@ -103,8 +101,7 @@ async function getInstallations(req, res) {
     if (!(error instanceof readings.ReadingFilterError)) throw error;
     return sendError(res, error.status, { code: error.code, message: error.message, details: [] });
   }
-  const tag = createHash("sha256").update(JSON.stringify({ user: req.user, substationId: req.params.substationId, query: req.installationQuery, body })).digest("hex");
-  return res.set({ "Cache-Control": "private, no-cache", ETag: `"${tag}"` }).json(body);
+  return sendPrivateJson(res, body, { user: req.user, substationId: req.params.substationId, query: req.installationQuery, body });
 }
 
 module.exports = { postReading, getReading, getLastReading, getReadings, getOverview, getInstallation, getInstallations };

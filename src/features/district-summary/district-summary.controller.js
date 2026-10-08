@@ -1,4 +1,4 @@
-const { createHash } = require("node:crypto");
+const { sendPrivateJson } = require("../../utils/response-validators");
 const summary = require("./district-summary.service");
 const { sendError } = require("../../utils/http-errors");
 
@@ -15,7 +15,6 @@ async function getDistrictSummary(req, res) {
   if (!body) return sendError(res, 404, { code: "NOT_FOUND", message: "District not found.", details: [] });
   // asOf belongs to the representation: freshness expiry and midnight cannot
   // reuse a reading-only validator, even when no new measurements arrive.
-  const tag = createHash("sha256").update(JSON.stringify({ user: req.user, body })).digest("hex");
-  return res.set({ "Cache-Control": "private, no-cache", ETag: `"${tag}"` }).json(body);
+  return sendPrivateJson(res, body, { user: req.user, body });
 }
 module.exports = { getDistrictSummary, summaryClock };

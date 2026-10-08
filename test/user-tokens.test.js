@@ -75,7 +75,7 @@ test("admin/national/province/district logins issue verifiable short-lived datab
     assert.equal(Object.hasOwn(claims, "password"), false);
     assert.equal(Object.hasOwn(claims, "_id"), false);
     assert.equal(Object.hasOwn(claims, "email"), false);
-    if (profile.role === "admin") assert.deepEqual(claims.permissions, ["installation-create", "installation-deactivate", "installation-delete"]);
+    if (profile.role === "admin") assert.deepEqual(claims.permissions, ["installation-create", "installation-status-update", "installation-delete"]);
     else assert.equal(claims.permissions, undefined);
     assert.throws(() => jwt.verify(body.access_token, "wrong-key"));
     assert.throws(() => jwt.verify(body.access_token, config.signingKey, { audience: "wrong-audience" }));
