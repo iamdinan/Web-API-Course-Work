@@ -6,7 +6,7 @@ A Node.js/Express API backed by Mongoose and MongoDB Atlas for solar generation 
 
 ## Current implementation
 
-The application currently provides public `/health` and `/openapi.json`, user/admin login at `POST /auth/user-tokens`, device login at `POST /auth/device-tokens`, protected `GET /provinces`, `GET /readings`, `GET /installations/{installationId}/readings`, `GET /installations/{installationId}/readings/{readingId}`, `GET /installations/{installationId}/last-reading`, `GET /installations/{installationId}/overview`, `GET /installations/{installationId}`, `GET /installations`, `GET /grid-substations/{substationId}`, `GET /districts/{districtId}/grid-substations`, `GET /districts/{districtId}`, `GET /provinces/{provinceId}/districts`, `GET /provinces/{provinceId}`, `GET /summarize-district-generation`, and `GET /grid-substations/{substationId}/installations`, six data models, the full dataset seed, and controlled user seeding. Login and protected reads use shared MongoDB limits. Installation JWT verification and URL ownership protect `POST /installations/{installationId}/readings`, with transactional active-status checks and shared device-write limits. Admin creation at `POST /installations` and status updates at `PATCH /installations/{installationId}` use current-role authorization and shared admin-write limits; PATCH supports atomic optional If-Match. Remaining resource endpoints, Swagger UI, database readiness, and other traffic limits remain planned. The architecture describes the target API; OpenAPI describes implemented routes only.
+The application currently provides public `/health` and `/openapi.json`, user/admin login at `POST /auth/user-tokens`, device login at `POST /auth/device-tokens`, protected `GET /provinces`, `GET /readings`, `GET /installations/{installationId}/readings`, `GET /installations/{installationId}/readings/{readingId}`, `GET /installations/{installationId}/last-reading`, `GET /installations/{installationId}/overview`, `GET /installations/{installationId}`, `GET /installations`, `GET /grid-substations/{substationId}`, `GET /districts/{districtId}/grid-substations`, `GET /districts/{districtId}`, `GET /provinces/{provinceId}/districts`, `GET /provinces/{provinceId}`, `GET /summarize-district-generation`, and `GET /grid-substations/{substationId}/installations`, six data models, the full dataset seed, and controlled user seeding. Login and protected reads use shared MongoDB limits. Installation JWT verification and URL ownership protect `POST /installations/{installationId}/readings`, with transactional active-status checks and shared device-write limits. Admin creation at `POST /installations`, status updates at `PATCH /installations/{installationId}` and guarded deletion at `DELETE /installations/{installationId}` use current-role authorization and shared admin-write limits; PATCH/DELETE support atomic optional If-Match. Remaining resource endpoints, Swagger UI, database readiness, and other traffic limits remain planned. The architecture describes the target API; OpenAPI describes implemented routes only.
 
 ## Getting started
 
@@ -97,6 +97,7 @@ Append the paths below to your API base URL. Use your deployed HTTPS host with t
 | GET | `/installations` | Page/filter public installations within the user's jurisdiction |
 | POST | `/installations` | Create an active installation as a current database admin |
 | PATCH | `/installations/{installationId}` | Activate or deactivate an installation with optional atomic If-Match |
+| DELETE | `/installations/{installationId}` | Permanently delete an empty active/inactive installation with optional atomic If-Match |
 
 Health does not query MongoDB. For a manual startup check, confirm the connection message and request the health path.
 
@@ -194,11 +195,11 @@ Send a user/admin bearer token to GET `/installations/{installationId}/last-read
 
 ## List installations
 
-Send a user/admin bearer token to GET `/installations`. Optional provinceId, districtId and substationId filters narrow the authorized area; offset and limit select a page. Both active and inactive installations are included. See the [installation-list contract](docs/API_DESIGN_RULES.md#installation-list) for parameters, collection responses and caching. Installation creation and active/inactive status updates are implemented; DELETE remains planned.
+Send a user/admin bearer token to GET `/installations`. Optional provinceId, districtId and substationId filters narrow the authorized area; offset and limit select a page. Both active and inactive installations are included. See the [installation-list contract](docs/API_DESIGN_RULES.md#installation-list) for parameters, collection responses and caching. Installation creation, active/inactive status updates and guarded empty-installation deletion are implemented.
 
 ## Create an installation
 
-Send a user JWT whose current database role is admin to POST `/installations`. See the [creation contract](docs/API_DESIGN_RULES.md#installation-creation) for validation, errors and the shared admin-write limit. Supply an independent device secret; the seed prefix is not used. Meter IDs are trimmed; secret characters are preserved. Creation returns public fields, Location and the same strong ETag as detail GET. DELETE remains planned.
+Send a user JWT whose current database role is admin to POST `/installations`. See the [creation contract](docs/API_DESIGN_RULES.md#installation-creation) for validation, errors and the shared admin-write limit. Supply an independent device secret; the seed prefix is not used. Meter IDs are trimmed; secret characters are preserved. Creation returns public fields, Location and the same strong ETag as detail GET. Guarded empty-installation deletion is implemented.
 
 Manual PowerShell example (use a test database, a real substation UUID and admin token; retain the generated secret privately for device provisioning):
 
@@ -222,7 +223,7 @@ Repeat creation with the same meter for 409; use an analyst token for 403 or the
 
 ## Change installation status
 
-PATCH `/installations/{installationId}` with an admin user token and exactly `{"status":"inactive"}` or `{"status":"active"}`. It preserves identity, credentials, meter/substation binding and history. Repeated requests return the same public body/ETag. Creation and PATCH share the 30/minute per-admin write limit. See the [status-update HTTP contract](docs/API_DESIGN_RULES.md#installation-status-updates) and [transaction strategy](docs/architecture.md#admin-installation-management). DELETE remains unimplemented.
+PATCH `/installations/{installationId}` with an admin user token and exactly `{"status":"inactive"}` or `{"status":"active"}`. It preserves identity, credentials, meter/substation binding and history. Repeated requests return the same public body/ETag. Creation, PATCH and DELETE share the 30/minute per-admin write limit. See the [status-update HTTP contract](docs/API_DESIGN_RULES.md#installation-status-updates) and [transaction strategy](docs/architecture.md#admin-installation-management). Guarded empty-installation deletion is implemented.
 
 Manual Postman checks (use a test installation):
 
@@ -234,11 +235,26 @@ Manual Postman checks (use a test installation):
 6. Set body to `{}`, `{"status":"retired"}`, or add meterId/deviceSecret/id: expect 400. Invalid path UUID gives 400. No/invalid/device token gives 401; an analyst user token gives 403. Errors have the standard code/message/details shape, no-store and no validators.
 7. POST auth/device-tokens using the original correct meterId/deviceSecret: expect 403 INSTALLATION_INACTIVE. POST a new reading with the saved deviceToken: expect 403 INSTALLATION_INACTIVE. Verify authorized history GET still returns the previous readings. The meter remains reserved: creation with it gives 409.
 8. Reactivate with body `{"status":"active"}` and If-Match `{{inactiveETag}}`. Expect 200, active status and the original active ETag when other public fields are unchanged. Repeat with the returned ETag or without If-Match: unchanged 200. The old inactive ETag now gives 412. Correct-secret device login works again; the saved device token works only if it has not expired. Expired tokens remain 401, and reactivation never extends their expiry. Existing admin tokens continue to work because the current stored role is authoritative.
-9. In a fresh admin rate window, use Collection Runner for 31 valid-shaped PATCH requests targeting a nonexistent valid UUID. The first 30 return 404, the 31st returns 429 with Retry-After; earlier creation/PATCH attempts share this budget.
+9. In a fresh admin rate window, use Collection Runner for 31 valid-shaped PATCH requests targeting a nonexistent valid UUID. The first 30 return 404, the 31st returns 429 with Retry-After; earlier creation/PATCH/DELETE attempts share this budget.
+
+## Delete an empty installation
+
+DELETE `/installations/{installationId}` with a current admin user JWT and no body. Empty active and inactive installations may be removed permanently. Any history blocks removal with 409; no readings or parent resources are deleted. Creation, PATCH and DELETE share the 30/minute per-admin write budget. See the [deletion HTTP contract](docs/API_DESIGN_RULES.md#installation-deletion) and [transaction coordination](docs/architecture.md#admin-installation-management).
+
+Manual Postman checks (use disposable test installations):
+
+1. Create an installation via POST, save its UUID as emptyInstallationId, and obtain a device token while it is active; save that token as oldDeviceToken. Do not submit readings to this installation yet. GET `{{baseUrl}}/installations/{{emptyInstallationId}}` with Bearer `{{adminToken}}` and save its quoted ETag as installationETag.
+2. DELETE the same URL with Bearer `{{adminToken}}`, Body > none, and optional If-Match `{{installationETag}}`. Expect 204, an empty response, Cache-Control: no-store and no Content-Type/ETag/Last-Modified. Repeat DELETE or detail GET: expect 404. Omit Content-Type on the DELETE request.
+3. Create additional empty fixtures to verify deletion without If-Match, with `*`, and with a list `"other", {{installationETag}}`. PATCH one empty fixture inactive, fetch its current tag, then DELETE it: also 204.
+4. For an existing fixture, DELETE with `"stale"` or `W/{{installationETag}}`: 412 with no change. Unquoted text or malformed lists: 400. A nonexistent valid UUID returns 404 even with malformed/stale If-Match; an invalid UUID returns 400. No/invalid/device token returns 401; an analyst token returns 403.
+5. Body > raw > JSON `{}` or `[]`, or raw Text payload: 400. Body > none requires no Content-Type. All errors have code/message/details, no-store and no validators.
+6. For a different active fixture, obtain its device token and submit a reading. DELETE with its current ETag (or wildcard/no header): 409 INSTALLATION_HAS_READINGS; stale ETag: 412 before the history conflict. Repeat after marking that fixture inactive: history still blocks deletion. Verify detail/history remain unchanged.
+7. POST a reading to the deleted UUID using oldDeviceToken: 401. Register its meterId again with a provisioning secret: creation returns a new UUID. That old token must fail on both the deleted and replacement URLs. Obtain a new token using the replacement's supplied secret for normal device writes.
+8. In a fresh rate window, run 31 valid bodyless DELETE requests for a nonexistent valid UUID through Collection Runner: first 30 return 404, then 429 with Retry-After. Earlier POST/PATCH/DELETE attempts count toward the same budget. The automated isolated tests additionally verify both ingestion/deletion commit orders and conflict retries; sequential manual requests do not establish concurrency safety.
 
 ## Read installation details
 
-Send a user/admin bearer token to GET `/installations/{installationId}`. It returns public installation metadata for active or inactive installations within jurisdiction, with a strong installation ETag for conditional GET. See the [installation-detail contract](docs/API_DESIGN_RULES.md#installation-details). Installation creation and active/inactive status updates are implemented; DELETE remains planned.
+Send a user/admin bearer token to GET `/installations/{installationId}`. It returns public installation metadata for active or inactive installations within jurisdiction, with a strong installation ETag for conditional GET. See the [installation-detail contract](docs/API_DESIGN_RULES.md#installation-details). Installation creation, active/inactive status updates and guarded empty-installation deletion are implemented.
 
 ## Read an installation overview
 
@@ -256,7 +272,7 @@ For regional history, send a user/admin bearer token to GET `/readings`. Optiona
 | --- | --- |
 | `src/config/` | Environment configuration and database connection |
 | `src/features/auth/` | User/device token routes, controllers, credential validation, and issuance services |
-| `src/features/installations/` | Admin installation creation/status-update routes, validation, controllers and persistence services |
+| `src/features/installations/` | Admin installation creation/status-update/deletion routes, validation, controllers and persistence services |
 | `src/features/readings/` | Reading routes, controllers, validation, public serialization, scoped queries, and transactional ingestion |
 | `src/features/provinces/` | Province routes, controllers, query validation, and scoped queries |
 | `src/features/districts/` | District detail/province collection routes, validation, controllers and authorized ancestry queries |

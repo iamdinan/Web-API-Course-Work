@@ -231,7 +231,7 @@ integration("persistence failures are sanitized without credentials or validator
   assert.equal(await models.SolarInstallation.countDocuments({}), 1);
 });
 
-test("OpenAPI documents implemented creation, public response and admin policy without DELETE", () => {
+test("OpenAPI documents implemented creation, public response and admin policy", () => {
   const spec = require("../docs/openapi.json");
   const operation = spec.paths["/installations"].post;
   assert.deepEqual(operation.security, [{ UserBearer: [] }]);
@@ -244,7 +244,7 @@ test("OpenAPI documents implemented creation, public response and admin policy w
   for (const name of ["Location", "ETag", "Cache-Control"]) assert.ok(operation.responses[201].headers[name]);
   for (const status of [400, 401, 403, 404, 406, 409, 413, 415, 429, 500]) assert.ok(operation.responses[status]);
   assert.ok(spec.paths["/installations/{installationId}"].patch);
-  assert.equal(spec.paths["/installations/{installationId}"].delete, undefined);
+  assert.ok(spec.paths["/installations/{installationId}"].delete);
 });
 
 function patch(access, input = { status: "inactive" }, ifMatch, id = installationId, headers = {}) {
@@ -560,7 +560,7 @@ test("If-Match parser respects opaque commas, strong tags, whitespace and strict
 test("OpenAPI PATCH documents strict status updates, optional If-Match, shared limits and public ETag", () => {
   const spec = require("../docs/openapi.json");
   const resource = spec.paths["/installations/{installationId}"];
-  assert.deepEqual(Object.keys(resource), ["get", "patch"]);
+  assert.deepEqual(Object.keys(resource), ["get", "patch", "delete"]);
   const operation = resource.patch;
   assert.deepEqual(operation.security, [{ UserBearer: [] }]);
   const input = spec.components.schemas.InstallationStatusInput;
@@ -571,6 +571,225 @@ test("OpenAPI PATCH documents strict status updates, optional If-Match, shared l
   assert.equal(operation.responses[200].headers.ETag.$ref, "#/components/headers/InstallationETag");
   assert.equal(operation.responses[200].content["application/json"].schema.$ref, "#/components/schemas/SolarInstallation");
   for (const status of [400, 401, 403, 404, 406, 412, 413, 415, 429, 500]) assert.ok(operation.responses[status]);
-  assert.equal(resource.delete, undefined);
+  assert.ok(resource.delete);
+});
+
+function remove(access, ifMatch, id = installationId, body, headers = {}) {
+  return fetch(`${origin}/installations/${id}`, { method: "DELETE", headers: {
+    ...(access ? { Authorization: `Bearer ${access}` } : {}),
+    ...(ifMatch !== undefined ? { "If-Match": ifMatch } : {}), ...headers,
+  }, ...(body !== undefined ? { body } : {}) });
+}
+async function deleted(response) {
+  assert.equal(response.status, 204);
+  assert.equal(await response.text(), "");
+  for (const header of ["etag", "last-modified", "content-type"]) assert.equal(response.headers.get(header), null);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+}
+const { deleteInstallation } = require("../src/features/installations/installations.service");
+
+integration("DELETE empty active/inactive installations supports unconditional, strong/list/wildcard preconditions and retains parents", async () => {
+  const { access, input } = await fixture();
+  const parents = await Promise.all([models.Province.collection.find({}).toArray(), models.District.collection.find({}).toArray(), models.GridSubstation.collection.find({}).toArray()]);
+  for (const status of ["active", "inactive"]) for (const mode of ["absent", "single", "list", "wildcard"]) {
+    if (!await installationSnapshot()) {
+      const replacement = await models.SolarInstallation.create({ substationId: input.substationId, meterId: "TEST-METER", status, deviceCredentialHash: "fixture-only-hash" });
+      installationId = replacement.publicId;
+    } else await models.SolarInstallation.updateOne({ publicId: installationId }, { status });
+    const tag = await currentTag(access);
+    const header = mode === "absent" ? undefined : mode === "single" ? tag : mode === "list" ? `W/${tag}, "other", ${tag}` : "*";
+    await deleted(await remove(access, header));
+    assert.equal(await installationSnapshot(), null);
+    await errorResponse(await remove(access, "bad"), 404, "NOT_FOUND");
+    assert.equal((await rawGet(`/installations/${installationId}`, access, {})).status, 404);
+  }
+  assert.equal(await models.GenerationReading.countDocuments({}), 0);
+  assert.deepEqual(await Promise.all([models.Province.collection.find({}).toArray(), models.District.collection.find({}).toArray(), models.GridSubstation.collection.find({}).toArray()]), parents);
+});
+
+integration("DELETE history guard preserves active/inactive records and evaluates If-Match before history", async t => {
+  const { access } = await fixture();
+  await createReading(installationId, readingInput);
+  const history = await models.GenerationReading.collection.find({}).toArray();
+  const original = models.GenerationReading.exists;
+  let guards = 0;
+  t.mock.method(models.GenerationReading, "exists", function (...args) { guards++; return original.apply(this, args); });
+  for (const status of ["active", "inactive"]) {
+    await models.SolarInstallation.updateOne({ publicId: installationId }, { status });
+    const before = await installationSnapshot();
+    const tag = await currentTag(access);
+    const previousGuards = guards;
+    for (const header of ['"stale"', `W/${tag}`]) await errorResponse(await remove(access, header), 412, "PRECONDITION_FAILED");
+    await errorResponse(await remove(access, "bad"), 400, "INVALID_REQUEST");
+    assert.equal(guards, previousGuards);
+    for (const header of [undefined, tag, "*"]) await errorResponse(await remove(access, header), 409, "INSTALLATION_HAS_READINGS");
+    assert.deepEqual(await installationSnapshot(), before);
+    assert.deepEqual(await models.GenerationReading.collection.find({}).toArray(), history);
+  }
+});
+
+integration("DELETE rejects actors, stale admin roles, invalid paths/bodies and missing resources before preconditions", async () => {
+  const { access, user } = await fixture();
+  const before = await installationSnapshot();
+  for (const denied of [null, "invalid", token(), token({}, { expiresIn: -1 })]) {
+    const response = await remove(denied, "bad", "bad");
+    await errorResponse(response, 401, "UNAUTHORIZED");
+    assert.equal(response.headers.get("www-authenticate"), "Bearer");
+  }
+  const ordinary = await analyst();
+  await errorResponse(await remove(ordinary.access, "bad", "bad"), 403, "FORBIDDEN");
+  await models.User.updateOne({ publicId: user.publicId }, { role: "user" });
+  await errorResponse(await remove(access), 403, "FORBIDDEN");
+  await models.User.updateOne({ publicId: user.publicId }, { role: "admin" });
+  await errorResponse(await remove(access, "bad", "bad"), 400, "INVALID_REQUEST");
+  for (const [body, type, code] of [["{}", "application/json", "INVALID_REQUEST"], ["[]", "application/json", "INVALID_REQUEST"],
+    ["text", "text/plain", "INVALID_REQUEST"], ["binary", "application/octet-stream", "INVALID_REQUEST"], ["{", "application/json", "INVALID_JSON"]]) {
+    await errorResponse(await remove(access, "bad", installationId, body, { "Content-Type": type }), 400, code);
+  }
+  await errorResponse(await remove(access, "bad", randomUUID()), 404, "NOT_FOUND");
+  await errorResponse(await remove(access, '"stale"', randomUUID()), 404, "NOT_FOUND");
+  assert.deepEqual(await installationSnapshot(), before);
+});
+
+integration("DELETE rejects streamed non-JSON bodies and accepts an empty body with optional media headers", async () => {
+  const { access } = await fixture();
+  const response = await new Promise((resolve, reject) => {
+    const request = http.request(`${origin}/installations/${installationId}`, { method: "DELETE", headers: {
+      Authorization: `Bearer ${access}`, "Content-Type": "text/plain", "Transfer-Encoding": "chunked",
+    } }, res => { let body = ""; res.on("data", chunk => { body += chunk; }); res.on("end", () => resolve({ status: res.statusCode, body: JSON.parse(body) })); });
+    request.on("error", reject); request.write("streamed body"); request.end();
+  });
+  assert.equal(response.status, 400);
+  assert.equal(response.body.code, "INVALID_REQUEST");
+  assert.ok(await installationSnapshot());
+  await deleted(await remove(access, undefined, installationId, undefined, { "Content-Type": "application/json", "Content-Length": "0" }));
+});
+
+integration("DELETE rejects old tokens and meter re-registration gets a new UUID without old-token ownership", async () => {
+  const { access, input } = await fixture();
+  const oldId = installationId, oldToken = token();
+  const beforeList = await rawGet("/installations", access, {});
+  const substation = await models.GridSubstation.findOne({ publicId: input.substationId });
+  const summaryPath = `/summarize-district-generation?districtId=${substation.districtId}`;
+  const beforeSummary = await rawGet(summaryPath, access, {});
+  await deleted(await remove(access));
+  const afterList = await rawGet("/installations", access, {});
+  const afterSummary = await rawGet(summaryPath, access, {});
+  assert.equal(afterList.body.count, 0);
+  assert.notEqual(afterList.headers.etag, beforeList.headers.etag);
+  assert.equal(afterSummary.body.freshInstallationCount + afterSummary.body.staleInstallationCount, 0);
+  assert.equal(afterSummary.body.incompleteEnergyInstallationCount, 0);
+  assert.notEqual(afterSummary.headers.etag, beforeSummary.headers.etag);
+  const submit = id => fetch(`${origin}/installations/${id}/readings`, { method: "POST", headers: { Authorization: `Bearer ${oldToken}`, "Content-Type": "application/json" }, body: JSON.stringify(readingInput) });
+  assert.equal((await submit(oldId)).status, 401);
+  const replacement = await create({ ...input, meterId: "TEST-METER" }, access);
+  assert.equal(replacement.status, 201);
+  const newId = (await replacement.json()).id;
+  assert.notEqual(newId, oldId);
+  assert.equal((await submit(oldId)).status, 401);
+  assert.equal((await submit(newId)).status, 401);
+  assert.equal(await models.GenerationReading.countDocuments({}), 0);
+});
+
+integration("DELETE shares POST/PATCH admin limits and rolls back lock on persistence failure", async t => {
+  const { access, input } = await fixture();
+  for (let i = 0; i < 28; i++) await errorResponse(await create({ ...input, substationId: randomUUID() }, access), 404, "NOT_FOUND");
+  assert.equal((await patch(access)).status, 200);
+  await errorResponse(await remove(access, undefined, randomUUID()), 404, "NOT_FOUND");
+  const before = await installationSnapshot();
+  const limited = await remove(access);
+  await errorResponse(limited, 429, "RATE_LIMIT_EXCEEDED");
+  assert.ok(Number(limited.headers.get("retry-after")) > 0);
+  const other = await analyst({ role: "admin" });
+  t.mock.method(models.SolarInstallation, "deleteOne", async () => { throw new Error("private persistence diagnostics"); });
+  await errorResponse(await remove(other.access), 500, "INTERNAL_SERVER_ERROR");
+  assert.deepEqual(await installationSnapshot(), before);
+});
+
+integration("DELETE conflict reloads the current ETag instead of reusing a stale successful comparison", async t => {
+  const { access } = await fixture();
+  const tag = await currentTag(access);
+  let release, reached;
+  const gate = new Promise(resolve => { release = resolve; });
+  const ready = new Promise(resolve => { reached = resolve; });
+  const original = models.SolarInstallation.updateOne;
+  let writes = 0;
+  t.mock.method(models.SolarInstallation, "updateOne", function (...args) {
+    const query = original.apply(this, args), execute = query.exec;
+    if (args[1].$set?._ingestionLock) query.exec = async function (...execArgs) {
+      writes++; if (writes === 1) { reached(); await gate; }
+      return execute.apply(this, execArgs);
+    };
+    return query;
+  });
+  const pending = remove(access, tag);
+  await ready;
+  assert.equal((await patch(access)).status, 200);
+  const committed = await installationSnapshot();
+  release(); await errorResponse(await pending, 412, "PRECONDITION_FAILED");
+  assert.deepEqual(await installationSnapshot(), committed);
+});
+
+integration("DELETE committing first causes already-authorized ingestion to retry and reject without orphan history", async t => {
+  const { access } = await fixture();
+  let release, reached, attempted;
+  const gate = new Promise(resolve => { release = resolve; });
+  const ready = new Promise(resolve => { reached = resolve; });
+  const attempt = new Promise(resolve => { attempted = resolve; });
+  const original = models.SolarInstallation.updateOne;
+  t.mock.method(models.SolarInstallation, "updateOne", function (...args) {
+    const query = original.apply(this, args), execute = query.exec;
+    if (args[1].$set?._ingestionLock && !args[0].status) query.exec = async function (...execArgs) {
+      const result = await execute.apply(this, execArgs); reached(); await gate; return result;
+    };
+    if (args[0].status === "active") attempted();
+    return query;
+  });
+  const deletion = remove(access);
+  await ready;
+  const rejected = assert.rejects(createReading(installationId, readingInput), error => error.status === 401);
+  await attempt; release(); await deleted(await deletion); await rejected;
+  assert.equal(await installationSnapshot(), null);
+  assert.equal(await models.GenerationReading.countDocuments({}), 0);
+});
+
+integration("ingestion committing first makes DELETE retry history guard and retain installation/readings", async t => {
+  const { access } = await fixture();
+  const tag = await currentTag(access);
+  let release, reached, attempted;
+  const gate = new Promise(resolve => { release = resolve; });
+  const ready = new Promise(resolve => { reached = resolve; });
+  const attempt = new Promise(resolve => { attempted = resolve; });
+  const originalSave = models.GenerationReading.prototype.save;
+  t.mock.method(models.GenerationReading.prototype, "save", async function (...args) {
+    const result = await originalSave.apply(this, args); reached(); await gate; return result;
+  });
+  const ingestion = createReading(installationId, readingInput);
+  await ready;
+  const original = models.SolarInstallation.updateOne;
+  let attempts = 0;
+  t.mock.method(models.SolarInstallation, "updateOne", function (...args) {
+    if (args[1].$set?._ingestionLock && !args[0].status) { attempts++; attempted(); }
+    return original.apply(this, args);
+  });
+  const pending = remove(access, tag);
+  await attempt; release(); await ingestion;
+  await errorResponse(await pending, 409, "INSTALLATION_HAS_READINGS");
+  assert.ok(attempts >= 2);
+  assert.ok(await installationSnapshot());
+  assert.equal((await installationSnapshot())._ingestionLock, undefined);
+  assert.equal(await models.GenerationReading.countDocuments({ installationId }), 1);
+  assert.equal(await currentTag(access), tag);
+});
+
+test("OpenAPI DELETE documents bodyless guarded deletion, preconditions, standard errors and no success validators", () => {
+  const op = require("../docs/openapi.json").paths["/installations/{installationId}"].delete;
+  assert.deepEqual(op.security, [{ UserBearer: [] }]);
+  assert.equal(op.requestBody, undefined);
+  assert.equal(op.parameters.find(p => p.name === "If-Match").required, false);
+  assert.equal(op.responses[204].content, undefined);
+  assert.deepEqual(Object.keys(op.responses[204].headers), ["Cache-Control"]);
+  for (const status of [400, 401, 403, 404, 406, 409, 412, 413, 429, 500]) assert.ok(op.responses[status]);
+  assert.match(op.responses[409].description, /INSTALLATION_HAS_READINGS/);
 });
 

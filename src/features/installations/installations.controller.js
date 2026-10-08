@@ -21,4 +21,15 @@ async function patchInstallation(req, res) {
     return sendError(res, error.status, { code: error.code, message: error.message, details: [] });
   }
 }
-module.exports = { postInstallation, patchInstallation };
+async function deleteInstallation(req, res) {
+  try {
+    await installations.deleteInstallation(req.params.installationId, req.headers["if-match"]);
+    res.removeHeader("ETag");
+    res.removeHeader("Last-Modified");
+    return res.status(204).end();
+  } catch (error) {
+    if (!(error instanceof installations.InstallationWriteError)) throw error;
+    return sendError(res, error.status, { code: error.code, message: error.message, details: [] });
+  }
+}
+module.exports = { postInstallation, patchInstallation, deleteInstallation };

@@ -14,7 +14,7 @@ app.use(apiBaseUrl, (req, res, next) => {
     res.set('Cache-Control', 'no-store');
   }
   if ((req.method === 'POST' && /^\/installations\/?$/i.test(req.path)) ||
-      (req.method === 'PATCH' && /^\/installations\/[^/]+\/?$/i.test(req.path))) {
+      (['PATCH', 'DELETE'].includes(req.method) && /^\/installations\/[^/]+\/?$/i.test(req.path))) {
     res.set('Cache-Control', 'no-store');
     res.locals.omitErrorValidators = true;
   }

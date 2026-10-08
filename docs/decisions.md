@@ -201,6 +201,12 @@ The initial deactivation-only scope below is superseded by D35 for allowed statu
 - **Token behavior:** No device JWT format/lifetime changes or credential rotation. Inactive installations cannot log in or write. Reactivation restores access: unexpired device tokens work until their original exp, while expired tokens remain invalid and require login. This is the user-approved lifecycle behavior, not permanent token revocation.
 - **Reason:** One reversible status supports maintenance/suspension and indefinite blocking without losing meter identity or readings. Status changes serialize with ingestion; stale If-Match still fails even for either no-op status. This replaces prior deactivation-only restrictions in D34 and the operational contract. DELETE remains outside this implementation.
 
+## D36 - Guarded installation hard deletion
+
+- **Choice:** Implement bodyless DELETE for empty active/inactive installations using existing current-user/admin authorization, public path validation, shared installationForWrite/precondition utilities and POST/PATCH admin-write limits. In a snapshot/majority transaction, resolve identity and If-Match, force a real temporary parent write, then check for any reading and delete only an empty installation. Every transaction retry repeats all resource/precondition/history checks.
+- **Reason:** A snapshot-only or separate count-then-delete check cannot prevent concurrent ingestion from orphaning history. Writing the same parent as ingestion serializes both commit orders: earlier ingestion yields 409; earlier deletion prevents the reading commit. Conditional failures precede the history guard. Preserve all readings and unrelated resources; absent/invalid tokens fail before resource processing. Successful deletion releases the meter but old UUID-bound tokens cannot access a replacement. This implements the DELETE scope previously left outside D34/D35; their PATCH and token semantics remain unchanged.
+- **Response:** Bodyless 204 without resource validators; missing/repeated target 404, history 409 INSTALLATION_HAS_READINGS and stale If-Match 412. Body rejection covers JSON and unparsed media/framing. Operational instructions and manual checks remain in README; schemas and exact HTTP behavior remain in their owning documents.
+
 ## Pending decisions
 
 | Topic | Decision needed |
