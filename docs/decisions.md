@@ -168,11 +168,4 @@ Expose the generation summary at `/districts/{districtId}/generation-summary` to
 
 ## D42 - Render deployment
 
-The API is deployed on Render at [https://slsea-api.onrender.com](https://slsea-api.onrender.com/), with `/api/v1.0` as the API prefix. The [README](../README.md#current-implementation) provides the public health, Swagger UI and OpenAPI URLs. Hosting and the public HTTPS URL are settled; trusted proxy/IP configuration remains to be confirmed.
-
-## Pending decisions
-
-| Topic | Decision needed |
-| --- | --- |
-| Proxy configuration | Confirm trusted proxy/IP configuration for the Render deployment. |
-| Swagger browser verification | Verify Swagger UI rendering, endpoint order, authorization and Try it out in a real browser. |
+The API is deployed on Render at [https://slsea-api.onrender.com](https://slsea-api.onrender.com/), with `/api/v1.0` as the API prefix. The [README](../README.md#current-implementation) provides the public health, Swagger UI and OpenAPI URLs.
