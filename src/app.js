@@ -4,7 +4,7 @@ const apiRouter = require('./routes/api.routes');
 const { notFound, errorHandler } = require('./middleware/error-handler');
 
 const protectedReadPaths = [
-  /^\/installations(?:\/[^/]+(?:\/(readings(?:\/[^/]+)?|last-reading|overview))?)?\/?$/i,
+  /^\/installations(?:\/[^/]+(?:\/(readings(?:\/[^/]+)?|latest-reading|overview))?)?\/?$/i,
   /^\/readings\/?$/i,
   /^\/grid-substations\/[^/]+(?:\/installations)?\/?$/i,
   /^\/districts\/[^/]+(?:\/(grid-substations|generation-summary))?\/?$/i,

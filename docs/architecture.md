@@ -99,7 +99,7 @@ Prefix every path below with `/api/v1.0`. Each row is one path. “User” means
 | `/installations` | GET, POST | User; regional list. Admin; create installation |
 | `/installations/{installationId}` | GET, PATCH, DELETE | User; details. Admin; set status to active or inactive, or hard-delete only if no readings exist |
 | `/installations/{installationId}/overview` | GET | User; details, geography, latest reading |
-| `/installations/{installationId}/last-reading` | GET | User; latest reading |
+| `/installations/{installationId}/latest-reading` | GET | User; latest reading |
 | `/installations/{installationId}/readings` | GET, POST | User; history. Bound device; new reading |
 | `/installations/{installationId}/readings/{readingId}` | GET | User; individual reading |
 | `/readings` | GET | User; regional history |

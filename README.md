@@ -68,7 +68,7 @@ The live API base URL is `https://slsea-api.onrender.com/api/v1.0`. Append the p
 | GET | `/grid-substations/{substationId}`, `/grid-substations/{substationId}/installations` |
 | GET, POST | `/installations` |
 | GET, PATCH, DELETE | `/installations/{installationId}` |
-| GET | `/installations/{installationId}/overview`, `/installations/{installationId}/last-reading` |
+| GET | `/installations/{installationId}/overview`, `/installations/{installationId}/latest-reading` |
 | GET, POST | `/installations/{installationId}/readings` |
 | GET | `/installations/{installationId}/readings/{readingId}`, `/readings` |
 | GET | `/districts/{districtId}/generation-summary` |

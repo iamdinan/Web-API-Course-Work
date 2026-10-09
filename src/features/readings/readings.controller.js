@@ -23,8 +23,8 @@ async function getReading(req, res) {
   return sendReading(req, res, readings.findReading);
 }
 
-async function getLastReading(req, res) {
-  return sendReading(req, res, readings.findLastReading);
+async function getLatestReading(req, res) {
+  return sendReading(req, res, readings.findLatestReading);
 }
 
 async function sendReading(req, res, find) {
@@ -104,4 +104,4 @@ async function getInstallations(req, res) {
   return sendPrivateJson(res, body, { user: req.user, substationId: req.params.substationId, query: req.installationQuery, body });
 }
 
-module.exports = { postReading, getReading, getLastReading, getReadings, getOverview, getInstallation, getInstallations };
+module.exports = { postReading, getReading, getLatestReading, getReadings, getOverview, getInstallation, getInstallations };

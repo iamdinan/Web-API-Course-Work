@@ -30,7 +30,7 @@ async function findReading(user, installationId, readingId) {
   return reading ? readingBody(reading) : null;
 }
 
-async function findLastReading(user, installationId) {
+async function findLatestReading(user, installationId) {
   if (!await authorizedInstallation(user, installationId)) return null;
   return latestReadingBody(installationId);
 }
@@ -148,4 +148,4 @@ async function createReading(installationId, input) {
   }
 }
 
-module.exports = { createReading, findReading, findLastReading, findOverview, findInstallation, listInstallations, listReadings, listRegionalReadings, ReadingFilterError, ReadingWriteError, ReadingAccessError };
+module.exports = { createReading, findReading, findLatestReading, findOverview, findInstallation, listInstallations, listReadings, listRegionalReadings, ReadingFilterError, ReadingWriteError, ReadingAccessError };

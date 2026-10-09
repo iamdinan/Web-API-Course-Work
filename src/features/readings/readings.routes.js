@@ -3,7 +3,7 @@ const { verifyInstallationJwt } = require("../../middleware/verify-installation-
 const { requireInstallationOwnership } = require("../../middleware/require-installation-ownership");
 const { readingRequest } = require("./reading-request");
 const { deviceWriteLimit, userReadLimit } = require("../../middleware/rate-limits");
-const { postReading, getReading, getLastReading, getReadings, getOverview, getInstallation, getInstallations } = require("./readings.controller");
+const { postReading, getReading, getLatestReading, getReadings, getOverview, getInstallation, getInstallations } = require("./readings.controller");
 const { verifyUserJwt } = require("../../middleware/verify-user-jwt");
 const { validatePublicPath, rejectQueryParameters } = require("../../utils/public-request");
 const validateInstallationPath = validatePublicPath("installationId");
@@ -13,7 +13,7 @@ router.get("/readings", verifyUserJwt, userReadLimit, validateRegionalReadingQue
 router.get("/installations", verifyUserJwt, userReadLimit, validateInstallationQuery, getInstallations);
 router.get("/grid-substations/:substationId/installations", verifyUserJwt, userReadLimit, validatePublicPath("substationId"), rejectQueryParameters, getInstallations);
 router.get("/installations/:installationId", verifyUserJwt, userReadLimit, validateInstallationPath, rejectQueryParameters, getInstallation);
-router.get("/installations/:installationId/last-reading", verifyUserJwt, userReadLimit, validateInstallationPath, rejectQueryParameters, getLastReading);
+router.get("/installations/:installationId/latest-reading", verifyUserJwt, userReadLimit, validateInstallationPath, rejectQueryParameters, getLatestReading);
 router.get("/installations/:installationId/overview", verifyUserJwt, userReadLimit, validateInstallationPath, rejectQueryParameters, getOverview);
 router.post("/installations/:installationId/readings", verifyInstallationJwt, requireInstallationOwnership, readingRequest, rejectQueryParameters, deviceWriteLimit, postReading);
 router.get("/installations/:installationId/readings", verifyUserJwt, userReadLimit, validateInstallationPath, validateReadingQuery, getReadings);

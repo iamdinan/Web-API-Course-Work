@@ -1366,12 +1366,12 @@
         }
       }
     },
-    "/installations/{installationId}/last-reading": {
+    "/installations/{installationId}/latest-reading": {
       "get": {
         "tags": [
           "Readings"
         ],
-        "operationId": "getLastReading",
+        "operationId": "getLatestReading",
         "summary": "Get latest reading",
         "description": "Return the latest measurement by recordedAt, breaking ties by public UUID, including inactive history. Receipt order does not determine the latest measurement; delayed older readings do not change the selected result.",
         "security": [
